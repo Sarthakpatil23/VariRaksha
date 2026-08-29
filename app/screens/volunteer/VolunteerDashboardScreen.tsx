@@ -28,6 +28,8 @@ import {
   resolveEmergencyAlert,
   subscribeToEmergencyAlerts,
   EmergencyAlert,
+  calculateDynamicPriority,
+  prioritizeEmergencyAlerts,
 } from '../../services/alertService';
 
 export const VolunteerDashboardScreen: React.FC<
@@ -84,21 +86,22 @@ export const VolunteerDashboardScreen: React.FC<
         Vibration.vibrate([0, 250, 100, 250]);
         setAlerts((prev) => {
           const exists = prev.some((a) => a.id === newAlert.id);
-          if (exists) return prev;
-          return [newAlert, ...prev];
+          const list = exists ? prev.map((a) => (a.id === newAlert.id ? newAlert : a)) : [newAlert, ...prev];
+          return prioritizeEmergencyAlerts(list);
         });
       } else if (payload.eventType === 'UPDATE') {
         const updatedAlert = payload.new as EmergencyAlert;
-        setAlerts((prev) =>
-          prev.map((a) => (a.id === updatedAlert.id ? updatedAlert : a)),
-        );
+        setAlerts((prev) => {
+          const list = prev.map((a) => (a.id === updatedAlert.id ? updatedAlert : a));
+          return prioritizeEmergencyAlerts(list);
+        });
       } else if (payload.eventType === 'DELETE') {
         setAlerts((prev) => prev.filter((a) => a.id !== payload.old.id));
         setActiveClaimedRoute(null);
       }
     });
 
-    // 2. Fast 3.5s Polling Fallback to guarantee delivery
+    // 2. Fast 3.5s Polling Fallback to guarantee delivery & dynamic waiting time updates
     const pollInterval = setInterval(() => {
       fetchEmergencyAlerts().then(({ alerts: freshAlerts, error }) => {
         if (!error && freshAlerts) {
@@ -166,7 +169,7 @@ export const VolunteerDashboardScreen: React.FC<
             if (claimed) {
               // Update state locally
               setAlerts((prev) =>
-                prev.map((a) => (a.id === claimed.id ? claimed : a)),
+                prioritizeEmergencyAlerts(prev.map((a) => (a.id === claimed.id ? claimed : a))),
               );
 
               // Open navigation route
@@ -292,8 +295,8 @@ export const VolunteerDashboardScreen: React.FC<
     setMapModalVisible(true);
   };
 
-  // Filter active incoming / in-progress alerts
-  const activeAlerts = alerts.filter((a) => a.status !== 'resolved');
+  // Dynamically prioritize active queue
+  const activeAlerts = prioritizeEmergencyAlerts(alerts.filter((a) => a.status !== 'resolved'));
   const nearbyCount = alerts.filter((a) => a.status === 'nearby').length;
   const nearestAlert = activeAlerts.find((a) => a.status === 'nearby');
   const nearestDistance = nearestAlert?.distance_away || (nearestAlert ? '180m' : null);
@@ -338,6 +341,53 @@ export const VolunteerDashboardScreen: React.FC<
         claimedAt: myClaimedAlert.claimed_at,
       }
     : null;
+
+  // Helper to render distinct priority badges
+  const renderPriorityBadge = (alert: EmergencyAlert, isCompact: boolean = false) => {
+    const priority =
+      alert.priorityData?.priorityLevel ||
+      alert.priority_level ||
+      (alert.severity === 'critical' ? 'CRITICAL' : 'MODERATE');
+
+    switch (priority) {
+      case 'CRITICAL':
+        return (
+          <View style={[styles.priorityBadgeCritical, isCompact && styles.priorityBadgeCompact]}>
+            <View style={styles.priorityPulseDotRed} />
+            <Text style={[styles.priorityBadgeTextCritical, isCompact && styles.priorityBadgeTextCompact]}>
+              CRITICAL
+            </Text>
+          </View>
+        );
+      case 'HIGH':
+        return (
+          <View style={[styles.priorityBadgeHigh, isCompact && styles.priorityBadgeCompact]}>
+            <Ionicons name="flame" size={isCompact ? 10 : 12} color="#C2410C" style={{ marginRight: 2 }} />
+            <Text style={[styles.priorityBadgeTextHigh, isCompact && styles.priorityBadgeTextCompact]}>
+              HIGH
+            </Text>
+          </View>
+        );
+      case 'MODERATE':
+        return (
+          <View style={[styles.priorityBadgeModerate, isCompact && styles.priorityBadgeCompact]}>
+            <Ionicons name="alert-circle" size={isCompact ? 10 : 12} color="#B45309" style={{ marginRight: 2 }} />
+            <Text style={[styles.priorityBadgeTextModerate, isCompact && styles.priorityBadgeTextCompact]}>
+              MODERATE
+            </Text>
+          </View>
+        );
+      case 'LOW':
+      default:
+        return (
+          <View style={[styles.priorityBadgeLow, isCompact && styles.priorityBadgeCompact]}>
+            <Text style={[styles.priorityBadgeTextLow, isCompact && styles.priorityBadgeTextCompact]}>
+              LOW
+            </Text>
+          </View>
+        );
+    }
+  };
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -477,24 +527,24 @@ export const VolunteerDashboardScreen: React.FC<
         {/* 3. INCOMING ALERTS SECTION HEADER */}
         <View style={styles.sectionHeaderRow}>
           <View style={styles.sectionTitleWithDot}>
-            <Text style={styles.sectionHeading}>Incoming Alerts</Text>
+            <Text style={styles.sectionHeading}>Prioritized Response Queue</Text>
             <View style={styles.nearbyCountPill}>
               <Text style={styles.nearbyCountPillText}>{nearbyCount} Nearby</Text>
             </View>
           </View>
           <TouchableOpacity onPress={loadAlerts} style={{ flexDirection: 'row', alignItems: 'center' }}>
             {isLoading && <ActivityIndicator size="small" color={colors.maroon} style={{ marginRight: 4 }} />}
-            <Text style={styles.liveQueueSubtext}>Live Dispatch Queue</Text>
+            <Text style={styles.liveQueueSubtext}>Live Dynamic Triage</Text>
           </TouchableOpacity>
         </View>
 
-        {/* 4. REALTIME DYNAMIC ALERTS STACK */}
+        {/* 4. REALTIME DYNAMIC PRIORITIZED ALERTS STACK */}
         <View style={styles.alertsContainer}>
           {isLoading && alerts.length === 0 ? (
             <View style={styles.emptyQueueCard}>
               <ActivityIndicator size="large" color={colors.maroon} />
               <Text style={[styles.emptyQueueSubtitle, { marginTop: 12 }]}>
-                Syncing with live incident database...
+                Calculating live response priorities...
               </Text>
             </View>
           ) : activeAlerts.length === 0 ? (
@@ -509,8 +559,12 @@ export const VolunteerDashboardScreen: React.FC<
             activeAlerts.map((item) => {
               const claimedByMe = isAlertClaimedByMe(item);
               const claimedByOther = isAlertClaimedByOther(item);
-              const isCritical = item.severity === 'critical';
+              const isCritical = item.severity === 'critical' || item.priority_level === 'CRITICAL';
               const detailNote = item.notes || item.description || '';
+              const explanationText =
+                item.priorityData?.explanation ||
+                item.priority_explanation ||
+                (item.medical_context ? `${item.medical_context} · Standard response` : item.problem_type);
 
               // DIFFERENT COMPACT UI FOR VOLUNTEERS WHO DID NOT CLAIM THIS ALERT
               if (claimedByOther) {
@@ -524,10 +578,13 @@ export const VolunteerDashboardScreen: React.FC<
 
                         <View style={{ flex: 1 }}>
                           <View style={styles.compactOtherTitleRow}>
-                            <Text style={styles.compactOtherPilgrimName}>
-                              {item.pilgrim_name}
-                              {item.pilgrim_age ? `, ${item.pilgrim_age}` : ''}
-                            </Text>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                              <Text style={styles.compactOtherPilgrimName}>
+                                {item.pilgrim_name}
+                                {item.pilgrim_age ? `, ${item.pilgrim_age}` : ''}
+                              </Text>
+                              {renderPriorityBadge(item, true)}
+                            </View>
                             <Text style={styles.compactOtherTimestamp}>
                               {formatTimeAgo(item.created_at)}
                             </Text>
@@ -592,7 +649,7 @@ export const VolunteerDashboardScreen: React.FC<
                     </View>
                   )}
 
-                  {/* Header: Avatar icon, Name, Timestamp, Location */}
+                  {/* Header: Avatar icon, Name, Priority Badge, Timestamp, Location */}
                   <View style={styles.alertCardHeader}>
                     <View
                       style={[
@@ -615,10 +672,13 @@ export const VolunteerDashboardScreen: React.FC<
 
                     <View style={styles.alertInfoTextGroup}>
                       <View style={styles.titleWithTimestampRow}>
-                        <Text style={styles.pilgrimName}>
-                          {item.pilgrim_name}
-                          {item.pilgrim_age ? `, ${item.pilgrim_age}` : ''}
-                        </Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, flex: 1 }}>
+                          <Text style={styles.pilgrimName}>
+                            {item.pilgrim_name}
+                            {item.pilgrim_age ? `, ${item.pilgrim_age}` : ''}
+                          </Text>
+                          {renderPriorityBadge(item)}
+                        </View>
                         <Text style={[styles.timestampText, claimedByMe && { marginRight: 85 }]}>
                           {formatTimeAgo(item.created_at)}
                         </Text>
@@ -649,6 +709,16 @@ export const VolunteerDashboardScreen: React.FC<
                       {detailNote ? ` (${detailNote})` : ''}
                     </Text>
                   </View>
+
+                  {/* Dynamic Priority Explanation Tag / Triage Factors */}
+                  {explanationText && (
+                    <View style={styles.priorityExplanationBanner}>
+                      <Ionicons name="speedometer-outline" size={13} color="#475569" style={{ marginRight: 5 }} />
+                      <Text style={styles.priorityExplanationText} numberOfLines={1}>
+                        {explanationText}
+                      </Text>
+                    </View>
+                  )}
 
                   {/* Medical Context / Tags */}
                   <View style={styles.tagsRow}>
@@ -709,7 +779,10 @@ export const VolunteerDashboardScreen: React.FC<
                     <TouchableOpacity
                       activeOpacity={0.85}
                       onPress={() => handleRespond(item)}
-                      style={styles.respondNowButton}
+                      style={[
+                        styles.respondNowButton,
+                        isCritical && styles.respondNowButtonCritical,
+                      ]}
                     >
                       <FontAwesome5
                         name="running"
@@ -718,7 +791,7 @@ export const VolunteerDashboardScreen: React.FC<
                         style={{ marginRight: 8 }}
                       />
                       <Text style={styles.respondNowButtonText}>
-                        Respond Now · ~1 min walk
+                        {isCritical ? 'Respond to Critical SOS · Immediate' : 'Respond Now · ~1 min walk'}
                       </Text>
                     </TouchableOpacity>
                   )}
@@ -1126,6 +1199,105 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 4,
   },
+
+  // PRIORITY BADGES
+  priorityBadgeCritical: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FCA5A5',
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  priorityBadgeHigh: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF7ED',
+    borderColor: '#FDBA74',
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  priorityBadgeModerate: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEFCE8',
+    borderColor: '#FDE047',
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  priorityBadgeLow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+    borderColor: '#CBD5E1',
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  priorityBadgeCompact: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 6,
+  },
+  priorityPulseDotRed: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#DC2626',
+    marginRight: 4,
+  },
+  priorityBadgeTextCritical: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: '#DC2626',
+    letterSpacing: 0.5,
+  },
+  priorityBadgeTextHigh: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: '#C2410C',
+    letterSpacing: 0.5,
+  },
+  priorityBadgeTextModerate: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#B45309',
+    letterSpacing: 0.4,
+  },
+  priorityBadgeTextLow: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#475569',
+    letterSpacing: 0.4,
+  },
+  priorityBadgeTextCompact: {
+    fontSize: 9,
+  },
+
+  // PRIORITY EXPLANATION BANNER
+  priorityExplanationBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  priorityExplanationText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#334155',
+    flex: 1,
+  },
+
   // COMPACT CARD FOR ALERTS CLAIMED BY ANOTHER VOLUNTEER
   alertCardCompactOther: {
     backgroundColor: '#F8FAFC',
@@ -1321,7 +1493,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 10,
-    marginBottom: 10,
+    marginBottom: 8,
   },
   reasonBoxBlue: {
     backgroundColor: '#F0F9FF',
@@ -1363,6 +1535,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 4,
     elevation: 3,
+  },
+  respondNowButtonCritical: {
+    backgroundColor: '#B91C1C',
   },
   respondNowButtonText: {
     fontSize: 14,

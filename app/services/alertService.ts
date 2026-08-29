@@ -1,5 +1,21 @@
 import { supabase } from '../lib/supabaseClient';
 import { UserProfile, getUserAIContext } from '../lib/userStore';
+import {
+  calculateDynamicPriority,
+  prioritizeEmergencyAlerts,
+  compareAlertPriority,
+  PriorityLevel,
+  PriorityFactorsBreakdown,
+  PrioritizedAlertInput,
+} from './priorityEngine';
+
+export {
+  calculateDynamicPriority,
+  prioritizeEmergencyAlerts,
+  compareAlertPriority,
+  PriorityLevel,
+  PriorityFactorsBreakdown,
+};
 
 export type AlertSeverity = 'critical' | 'moderate' | 'normal';
 export type AlertStatus = 'nearby' | 'in_progress' | 'resolved';
@@ -15,6 +31,7 @@ export interface EmergencyAlert {
   emergency_card_id?: string;
   dindi_name?: string;
   problem_type: string;
+  emergency_type?: string;
   description?: string;
   medical_context?: string;
   severity: AlertSeverity;
@@ -31,6 +48,12 @@ export interface EmergencyAlert {
   notes?: string;
   created_at: string;
   updated_at?: string;
+  priority_level?: PriorityLevel;
+  priority_score?: number;
+  effective_priority_score?: number;
+  priority_explanation?: string;
+  priority_factors?: any;
+  priorityData?: PriorityFactorsBreakdown;
 }
 
 export interface VolunteerTask {
@@ -155,6 +178,18 @@ export async function createEmergencySOS(
       criticalProblems.some((p) => payload.problemType.toLowerCase().includes(p.toLowerCase()));
     const severity: AlertSeverity = isCritical ? 'critical' : 'moderate';
 
+    // Calculate baseline priority factors
+    const priorityBreakdown = calculateDynamicPriority({
+      severity,
+      problem_type: payload.problemType,
+      description: payload.description || '',
+      notes: payload.description || '',
+      pilgrim_age: pilgrimAge,
+      medical_context: medicalContext,
+      created_at: new Date().toISOString(),
+      status: 'nearby',
+    });
+
     const insertData: Record<string, any> = {
       pilgrim_name: pilgrimName,
       pilgrim_phone: pilgrimPhone,
@@ -163,6 +198,7 @@ export async function createEmergencySOS(
       emergency_card_id: emergencyCardId,
       dindi_name: dindiName,
       problem_type: payload.problemType,
+      emergency_type: payload.problemType,
       notes: payload.description || '',
       medical_context: medicalContext,
       severity,
@@ -171,11 +207,14 @@ export async function createEmergencySOS(
       location_name: loc.locationName,
       latitude: loc.latitude,
       longitude: loc.longitude,
+      priority_level: priorityBreakdown.priorityLevel,
+      priority_score: priorityBreakdown.rawScore,
+      priority_factors: priorityBreakdown,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
 
-    console.log('[AlertService] Submitting SOS to Supabase:', insertData);
+    console.log('[AlertService] Submitting prioritized SOS to Supabase:', insertData);
 
     const { data, error } = await supabase
       .from('emergency_alerts')
@@ -194,6 +233,7 @@ export async function createEmergencySOS(
         emergency_card_id: emergencyCardId,
         dindi_name: dindiName,
         problem_type: payload.problemType,
+        emergency_type: payload.problemType,
         description: payload.description || '',
         notes: payload.description || '',
         medical_context: medicalContext,
@@ -203,6 +243,12 @@ export async function createEmergencySOS(
         location_name: loc.locationName,
         latitude: loc.latitude,
         longitude: loc.longitude,
+        priority_level: priorityBreakdown.priorityLevel,
+        priority_score: priorityBreakdown.rawScore,
+        effective_priority_score: priorityBreakdown.effectiveScore,
+        priority_explanation: priorityBreakdown.explanation,
+        priority_factors: priorityBreakdown,
+        priorityData: priorityBreakdown,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
@@ -210,8 +256,11 @@ export async function createEmergencySOS(
       return { alert: offlineAlert, isOfflineQueued: true, error: error.message };
     }
 
-    console.log('[AlertService] SOS Created in Supabase successfully:', data.id);
-    return { alert: data as EmergencyAlert, isOfflineQueued: false, error: null };
+    const created = data as EmergencyAlert;
+    created.priorityData = calculateDynamicPriority(created);
+
+    console.log('[AlertService] SOS Created in Supabase successfully:', data.id, 'Priority:', created.priority_level);
+    return { alert: created, isOfflineQueued: false, error: null };
   } catch (err: any) {
     console.error('[AlertService] Unexpected error creating SOS:', err);
     return { alert: null, isOfflineQueued: false, error: err.message || 'Failed to trigger SOS' };
@@ -219,13 +268,29 @@ export async function createEmergencySOS(
 }
 
 /**
- * Fetch emergency alerts from Supabase
+ * Fetch emergency alerts from Supabase dynamically prioritized
  */
 export async function fetchEmergencyAlerts(): Promise<{
   alerts: EmergencyAlert[];
   error: string | null;
 }> {
   try {
+    // 1. Try PostgreSQL RPC with real-time response priority scoring
+    const { data: rpcData, error: rpcError } = await supabase.rpc('get_prioritized_emergency_alerts');
+
+    if (!rpcError && rpcData && Array.isArray(rpcData)) {
+      const enriched: EmergencyAlert[] = rpcData.map((item: any) => ({
+        ...item,
+        priorityData: calculateDynamicPriority(item),
+      }));
+      return { alerts: enriched, error: null };
+    }
+
+    if (rpcError) {
+      console.warn('[AlertService] RPC get_prioritized_emergency_alerts error, falling back to direct table select:', rpcError.message);
+    }
+
+    // 2. Direct table select fallback
     const { data, error } = await supabase
       .from('emergency_alerts')
       .select('*')
@@ -236,22 +301,8 @@ export async function fetchEmergencyAlerts(): Promise<{
       return { alerts: [], error: error.message };
     }
 
-    // Sort: Nearby / Open first (critical first), In Progress second, Resolved last
-    const sorted = [...(data || [])].sort((a: EmergencyAlert, b: EmergencyAlert) => {
-      const statusWeight = { nearby: 1, in_progress: 2, resolved: 3 };
-      const severityWeight = { critical: 1, moderate: 2, normal: 3 };
-
-      const swA = statusWeight[a.status] || 2;
-      const swB = statusWeight[b.status] || 2;
-      if (swA !== swB) return swA - swB;
-
-      const sevA = severityWeight[a.severity] || 2;
-      const sevB = severityWeight[b.severity] || 2;
-      if (sevA !== sevB) return sevA - sevB;
-
-      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-    });
-
+    // Sort using single-source-of-truth priority engine
+    const sorted = prioritizeEmergencyAlerts(data || []);
     return { alerts: sorted, error: null };
   } catch (err: any) {
     console.error('[AlertService] Unexpected fetch error:', err);
@@ -458,7 +509,11 @@ export function subscribeToSingleAlert(
             console.log('[AlertService] Single alert deleted from DB');
             onUpdate(null);
           } else if (payload.new) {
-            onUpdate(payload.new as EmergencyAlert);
+            const enriched = {
+              ...(payload.new as EmergencyAlert),
+              priorityData: calculateDynamicPriority(payload.new as EmergencyAlert),
+            };
+            onUpdate(enriched);
           }
         },
       )
@@ -487,7 +542,15 @@ export function subscribeToEmergencyAlerts(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'emergency_alerts' },
         (payload) => {
-          onUpdate(payload);
+          if (payload.new) {
+            const enriched = {
+              ...payload.new,
+              priorityData: calculateDynamicPriority(payload.new),
+            };
+            onUpdate({ ...payload, new: enriched });
+          } else {
+            onUpdate(payload);
+          }
         },
       )
       .subscribe();
