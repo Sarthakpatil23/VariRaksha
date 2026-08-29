@@ -15,8 +15,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialIcons, FontAwesome5 } from '@expo/vector-icons';
 import { VolunteerTabScreenProps } from '../../navigation/types';
 import { colors, spacing, typography } from '../../constants';
-import { VarkariInteractiveMap, ClaimedRouteMapData } from '../../components/map/VarkariInteractiveMap';
+import {
+  VarkariInteractiveMap,
+  ActiveSOSMapData,
+  ClaimedRouteMapData,
+} from '../../components/map/VarkariInteractiveMap';
 import { VarkariMapModal } from '../../components/map/VarkariMapModal';
+import { useUserProfile } from '../../lib/userStore';
 import {
   fetchEmergencyAlerts,
   claimEmergencyAlert,
@@ -25,78 +30,45 @@ import {
   EmergencyAlert,
 } from '../../services/alertService';
 
-// Default initial alerts in case DB is newly initialized or offline
-const INITIAL_DEFAULT_ALERTS: EmergencyAlert[] = [
-  {
-    id: 'e1111111-1111-1111-1111-111111111101',
-    pilgrim_name: 'Ramesh Kulkarni',
-    pilgrim_phone: '+91 94230 11221',
-    pilgrim_age: 68,
-    pilgrim_gender: 'Male',
-    dindi_name: 'Sant Tukaram Maharaj Dindi #04',
-    problem_type: 'Severe Chest Discomfort & High Blood Pressure',
-    medical_context: 'Hypertension · Cardiac Stent (2021) · Blood Group B+',
-    severity: 'critical',
-    status: 'nearby',
-    distance_away: '180m away',
-    location_name: 'Wakhari Main Gate',
-    latitude: 17.6862,
-    longitude: 75.3225,
-    created_at: new Date(Date.now() - 2 * 60000).toISOString(),
-  },
-  {
-    id: 'e2222222-2222-2222-2222-222222222202',
-    pilgrim_name: 'Anita Desai',
-    pilgrim_phone: '+91 94230 10002',
-    pilgrim_age: 54,
-    pilgrim_gender: 'Female',
-    dindi_name: 'Alandi Dindi #12',
-    problem_type: 'Acute Dehydration & Heat Exhaustion',
-    medical_context: 'Dehydration · Blood Group O+',
-    severity: 'moderate',
-    status: 'in_progress',
-    distance_away: '50m away',
-    location_name: 'Water Station 2',
-    latitude: 17.6845,
-    longitude: 75.3195,
-    responder_id: 'vol-rajwardhan',
-    responder_name: 'Rajwardhan Patil',
-    responder_phone: '+91 98221 55660',
-    created_at: new Date(Date.now() - 5 * 60000).toISOString(),
-  },
-  {
-    id: 'e3333333-3333-3333-3333-333333333303',
-    pilgrim_name: 'Suresh Patil',
-    pilgrim_phone: '+91 94230 40003',
-    pilgrim_age: 62,
-    pilgrim_gender: 'Male',
-    dindi_name: 'Dindi #01',
-    problem_type: 'Wheelchair Assistance Needed at Pavilion',
-    medical_context: 'Mobility Assist · Blood Group A+',
-    severity: 'moderate',
-    status: 'nearby',
-    distance_away: '320m away',
-    location_name: 'Rest Pavilion',
-    latitude: 17.6875,
-    longitude: 75.3240,
-    created_at: new Date(Date.now() - 14 * 60000).toISOString(),
-  },
-];
-
 export const VolunteerDashboardScreen: React.FC<
   VolunteerTabScreenProps<'VolunteerDashboard'>
 > = () => {
+  const profile = useUserProfile();
+  const volunteerId = profile?.id || 'vol-logged-in';
+  const volunteerName = profile?.fullName || 'Volunteer';
+  const volunteerPhone = profile?.mobileNumber || '+91 98221 55660';
+  const assignedSector = profile?.assignedSector || 'Sector 1 (Wakhari Gate)';
+
   const [isAvailable, setIsAvailable] = useState<boolean>(true);
-  const [alerts, setAlerts] = useState<EmergencyAlert[]>(INITIAL_DEFAULT_ALERTS);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [alerts, setAlerts] = useState<EmergencyAlert[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
   const [mapModalVisible, setMapModalVisible] = useState<boolean>(false);
   const [selectedMapPointId, setSelectedMapPointId] = useState<string | null>(null);
   const [activeClaimedRoute, setActiveClaimedRoute] = useState<ClaimedRouteMapData | null>(null);
+  const [modalActiveSos, setModalActiveSos] = useState<ActiveSOSMapData | null>(null);
 
   const currentVolunteer = {
-    id: 'vol-rajwardhan',
-    name: 'Rajwardhan Patil',
-    phone: '+91 98221 55660',
+    id: volunteerId,
+    name: volunteerName,
+    phone: volunteerPhone,
+  };
+
+  // Helper: check if a specific alert was claimed by THIS logged-in volunteer
+  const isAlertClaimedByMe = (item: EmergencyAlert) => {
+    if (item.status !== 'in_progress') return false;
+    const matchesId = Boolean(item.responder_id && item.responder_id === currentVolunteer.id);
+    const matchesName = Boolean(
+      item.responder_name &&
+        currentVolunteer.name &&
+        item.responder_name.trim().toLowerCase() === currentVolunteer.name.trim().toLowerCase() &&
+        currentVolunteer.name.toLowerCase() !== 'volunteer',
+    );
+    return matchesId || matchesName;
+  };
+
+  // Helper: check if a specific alert was claimed by ANOTHER volunteer
+  const isAlertClaimedByOther = (item: EmergencyAlert) => {
+    return item.status === 'in_progress' && !isAlertClaimedByMe(item);
   };
 
   // Load live alerts from Supabase on mount and subscribe to Realtime updates + fast polling fallback
@@ -122,15 +94,15 @@ export const VolunteerDashboardScreen: React.FC<
         );
       } else if (payload.eventType === 'DELETE') {
         setAlerts((prev) => prev.filter((a) => a.id !== payload.old.id));
+        setActiveClaimedRoute(null);
       }
     });
 
-    // 2. Fast 3.5s Polling Fallback to guarantee delivery even if mobile socket sleeps
+    // 2. Fast 3.5s Polling Fallback to guarantee delivery
     const pollInterval = setInterval(() => {
       fetchEmergencyAlerts().then(({ alerts: freshAlerts, error }) => {
-        if (!error && freshAlerts && freshAlerts.length > 0) {
+        if (!error && freshAlerts) {
           setAlerts((prev) => {
-            // Check if there are newly added alerts that we haven't seen yet
             const prevIds = new Set(prev.map((a) => a.id));
             const hasNew = freshAlerts.some((a) => !prevIds.has(a.id) && a.status === 'nearby');
             if (hasNew) {
@@ -153,7 +125,7 @@ export const VolunteerDashboardScreen: React.FC<
     const { alerts: fetchedAlerts, error } = await fetchEmergencyAlerts();
     setIsLoading(false);
 
-    if (!error && fetchedAlerts.length > 0) {
+    if (!error && fetchedAlerts) {
       setAlerts(fetchedAlerts);
     }
   };
@@ -180,7 +152,7 @@ export const VolunteerDashboardScreen: React.FC<
             if (alreadyClaimed) {
               Alert.alert(
                 'Already Claimed',
-                `This emergency alert is already being handled by ${claimedBy || 'another volunteer'}.`,
+                `This emergency alert has already been claimed by ${claimedBy || 'another volunteer'}.`,
               );
               loadAlerts();
               return;
@@ -208,17 +180,66 @@ export const VolunteerDashboardScreen: React.FC<
 
   // DIRECT NAVIGATION ROUTE MAP ACTION
   const handleNavigate = (alertItem: EmergencyAlert) => {
+    const sosLat = alertItem.latitude || 17.7120;
+    const sosLng = alertItem.longitude || 75.2410;
     const route: ClaimedRouteMapData = {
-      volunteerLat: 17.6854,
-      volunteerLng: 75.3211,
-      sosLat: alertItem.latitude || 17.7120,
-      sosLng: alertItem.longitude || 75.2410,
+      volunteerLat: sosLat + 0.0022,
+      volunteerLng: sosLng - 0.0018,
+      sosLat,
+      sosLng,
+      claimedAt: alertItem.claimed_at || alertItem.updated_at || new Date().toISOString(),
+      durationMs: 35000,
       pilgrimName: alertItem.pilgrim_name,
       problemType: alertItem.problem_type,
-      distance: alertItem.distance_away || '180m away',
-      eta: '~2 min walk',
+      distance: alertItem.distance_away || '280m away',
+      eta: '~1 min walk',
+    };
+    const sosData: ActiveSOSMapData = {
+      id: alertItem.id,
+      lat: sosLat,
+      lng: sosLng,
+      pilgrimName: alertItem.pilgrim_name,
+      problemType: alertItem.problem_type,
+      status: alertItem.status,
+      responderName: alertItem.responder_name || volunteerName,
+      responderPhone: alertItem.responder_phone || volunteerPhone,
+      claimedAt: alertItem.claimed_at,
     };
     setActiveClaimedRoute(route);
+    setModalActiveSos(sosData);
+    setSelectedMapPointId(null);
+    setMapModalVisible(true);
+  };
+
+  // PREVIEW OTHER VOLUNTEER'S INCIDENT ON MAP (Read-only observation)
+  const handlePreviewOtherMap = (alertItem: EmergencyAlert) => {
+    const sosLat = alertItem.latitude || 17.7120;
+    const sosLng = alertItem.longitude || 75.2410;
+    const route: ClaimedRouteMapData = {
+      volunteerLat: sosLat + 0.0022,
+      volunteerLng: sosLng - 0.0018,
+      sosLat,
+      sosLng,
+      claimedAt: alertItem.claimed_at || alertItem.updated_at || new Date().toISOString(),
+      durationMs: 35000,
+      pilgrimName: alertItem.pilgrim_name,
+      problemType: alertItem.problem_type,
+      distance: alertItem.distance_away || '280m away',
+      eta: '~1 min walk',
+    };
+    const sosData: ActiveSOSMapData = {
+      id: alertItem.id,
+      lat: sosLat,
+      lng: sosLng,
+      pilgrimName: alertItem.pilgrim_name,
+      problemType: alertItem.problem_type,
+      status: alertItem.status,
+      responderName: alertItem.responder_name || 'Volunteer Responder',
+      responderPhone: alertItem.responder_phone,
+      claimedAt: alertItem.claimed_at,
+    };
+    setActiveClaimedRoute(route);
+    setModalActiveSos(sosData);
     setSelectedMapPointId(null);
     setMapModalVisible(true);
   };
@@ -235,9 +256,10 @@ export const VolunteerDashboardScreen: React.FC<
           style: 'destructive',
           onPress: async () => {
             Vibration.vibrate(60);
-            const { alert: resolved, error } = await resolveEmergencyAlert(
+            const { error } = await resolveEmergencyAlert(
               alertItem.id,
               'Volunteer arrived on scene and stabilized pilgrim.',
+              true,
             );
 
             if (error) {
@@ -245,12 +267,10 @@ export const VolunteerDashboardScreen: React.FC<
               return;
             }
 
-            if (resolved) {
-              setAlerts((prev) =>
-                prev.map((a) => (a.id === resolved.id ? resolved : a)),
-              );
-              Alert.alert('Emergency Resolved', 'Incident marked as completed.');
-            }
+            // Immediately remove from active state
+            setAlerts((prev) => prev.filter((a) => a.id !== alertItem.id));
+            setActiveClaimedRoute(null);
+            Alert.alert('Emergency Resolved', 'Incident marked resolved and removed from live database.');
           },
         },
       ],
@@ -267,6 +287,7 @@ export const VolunteerDashboardScreen: React.FC<
 
   const handleOpenPOI = (pointId: string) => {
     setActiveClaimedRoute(null);
+    setModalActiveSos(null);
     setSelectedMapPointId(pointId);
     setMapModalVisible(true);
   };
@@ -274,6 +295,8 @@ export const VolunteerDashboardScreen: React.FC<
   // Filter active incoming / in-progress alerts
   const activeAlerts = alerts.filter((a) => a.status !== 'resolved');
   const nearbyCount = alerts.filter((a) => a.status === 'nearby').length;
+  const nearestAlert = activeAlerts.find((a) => a.status === 'nearby');
+  const nearestDistance = nearestAlert?.distance_away || (nearestAlert ? '180m' : null);
 
   const formatTimeAgo = (dateStr: string) => {
     const diff = Math.max(0, Date.now() - new Date(dateStr).getTime());
@@ -284,28 +307,37 @@ export const VolunteerDashboardScreen: React.FC<
     return `${hours}h ago`;
   };
 
-  // Find if there is an active claimed alert by this volunteer
-  const currentlyClaimedAlert = alerts.find(
-    (a) =>
-      a.status === 'in_progress' &&
-      (a.responder_id === currentVolunteer.id ||
-        a.responder_name?.toLowerCase() === currentVolunteer.name.toLowerCase()),
-  );
+  // Active alert claimed exclusively by THIS logged-in volunteer
+  const myClaimedAlert = alerts.find((a) => isAlertClaimedByMe(a));
 
-  const currentMapRoute: ClaimedRouteMapData | null =
-    activeClaimedRoute ||
-    (currentlyClaimedAlert
-      ? {
-          volunteerLat: 17.6854,
-          volunteerLng: 75.3211,
-          sosLat: currentlyClaimedAlert.latitude || 17.7120,
-          sosLng: currentlyClaimedAlert.longitude || 75.2410,
-          pilgrimName: currentlyClaimedAlert.pilgrim_name,
-          problemType: currentlyClaimedAlert.problem_type,
-          distance: currentlyClaimedAlert.distance_away || '180m away',
-          eta: '~2 min walk',
-        }
-      : null);
+  const myClaimedMapRoute: ClaimedRouteMapData | null = myClaimedAlert
+    ? {
+        volunteerLat: (myClaimedAlert.latitude || 17.7120) + 0.0022,
+        volunteerLng: (myClaimedAlert.longitude || 75.2410) - 0.0018,
+        sosLat: myClaimedAlert.latitude || 17.7120,
+        sosLng: myClaimedAlert.longitude || 75.2410,
+        claimedAt: myClaimedAlert.claimed_at || myClaimedAlert.updated_at || new Date().toISOString(),
+        durationMs: 35000,
+        pilgrimName: myClaimedAlert.pilgrim_name,
+        problemType: myClaimedAlert.problem_type,
+        distance: myClaimedAlert.distance_away || '280m away',
+        eta: '~1 min walk',
+      }
+    : null;
+
+  const myActiveSosForMap: ActiveSOSMapData | null = myClaimedAlert
+    ? {
+        id: myClaimedAlert.id,
+        lat: myClaimedAlert.latitude || 17.7120,
+        lng: myClaimedAlert.longitude || 75.2410,
+        pilgrimName: myClaimedAlert.pilgrim_name,
+        problemType: myClaimedAlert.problem_type,
+        status: myClaimedAlert.status,
+        responderName: myClaimedAlert.responder_name || volunteerName,
+        responderPhone: myClaimedAlert.responder_phone || volunteerPhone,
+        claimedAt: myClaimedAlert.claimed_at,
+      }
+    : null;
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -343,11 +375,11 @@ export const VolunteerDashboardScreen: React.FC<
         <View style={styles.statusCard}>
           <View style={styles.statusCardLeft}>
             <Text style={styles.statusLabel}>VOLUNTEER DASHBOARD</Text>
-            <Text style={styles.volunteerName}>Rajwardhan Patil</Text>
+            <Text style={styles.volunteerName}>{volunteerName}</Text>
             <View style={styles.sectorLocationRow}>
               <Ionicons name="location-sharp" size={13} color={colors.maroon} />
               <Text style={styles.sectorLocationText}>
-                Sector 1 (Alankapuram) · 750m radius
+                {assignedSector} · 750m radius
               </Text>
             </View>
           </View>
@@ -377,6 +409,71 @@ export const VolunteerDashboardScreen: React.FC<
           </TouchableOpacity>
         </View>
 
+        {/* 🚨 ACTIVE EMERGENCY DISPATCH CARD (ONLY VISIBLE FOR THE VOLUNTEER WHO CLAIMED IT) */}
+        {myClaimedAlert && myClaimedMapRoute && (
+          <View style={styles.activeDispatchSectionCard}>
+            <View style={styles.activeDispatchHeader}>
+              <View style={styles.activeDispatchHeaderLeft}>
+                <View style={styles.pulseDotRed} />
+                <Text style={styles.activeDispatchTitle}>LIVE EMERGENCY DISPATCH</Text>
+              </View>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => handleNavigate(myClaimedAlert)}
+                style={styles.expandHeaderPill}
+              >
+                <Text style={styles.expandHeaderPillText}>Full Map</Text>
+                <Ionicons name="expand" size={12} color="#0284C7" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.activeDispatchSubtext} numberOfLines={1}>
+              Navigating to: {myClaimedAlert.pilgrim_name} · {myClaimedAlert.problem_type}
+            </Text>
+
+            {/* Embedded Live Synchronized Navigation Map */}
+            <View style={styles.topMapEmbedWrapper}>
+              <VarkariInteractiveMap
+                isFullScreen={false}
+                activeSOS={myActiveSosForMap}
+                claimedRoute={myClaimedMapRoute}
+                onExpand={() => handleNavigate(myClaimedAlert)}
+                onCallVolunteer={() => handleCall(myClaimedAlert.pilgrim_phone, myClaimedAlert.pilgrim_name)}
+                onResolveSOS={() => handleResolve(myClaimedAlert)}
+              />
+            </View>
+
+            <View style={styles.topDispatchActionRow}>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => handleNavigate(myClaimedAlert)}
+                style={styles.topDispatchNavBtn}
+              >
+                <Ionicons name="navigate" size={15} color="#FFFFFF" />
+                <Text style={styles.topDispatchNavBtnText}>Open Full Navigation</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => handleCall(myClaimedAlert.pilgrim_phone, myClaimedAlert.pilgrim_name)}
+                style={styles.topDispatchCallBtn}
+              >
+                <Ionicons name="call" size={15} color="#0284C7" />
+                <Text style={styles.topDispatchCallBtnText}>Call</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => handleResolve(myClaimedAlert)}
+                style={styles.topDispatchResolveBtn}
+              >
+                <Ionicons name="checkmark-done" size={15} color="#15803D" />
+                <Text style={styles.topDispatchResolveBtnText}>Resolve</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
         {/* 3. INCOMING ALERTS SECTION HEADER */}
         <View style={styles.sectionHeaderRow}>
           <View style={styles.sectionTitleWithDot}>
@@ -393,22 +490,83 @@ export const VolunteerDashboardScreen: React.FC<
 
         {/* 4. REALTIME DYNAMIC ALERTS STACK */}
         <View style={styles.alertsContainer}>
-          {activeAlerts.length === 0 ? (
+          {isLoading && alerts.length === 0 ? (
+            <View style={styles.emptyQueueCard}>
+              <ActivityIndicator size="large" color={colors.maroon} />
+              <Text style={[styles.emptyQueueSubtitle, { marginTop: 12 }]}>
+                Syncing with live incident database...
+              </Text>
+            </View>
+          ) : activeAlerts.length === 0 ? (
             <View style={styles.emptyQueueCard}>
               <Ionicons name="shield-checkmark" size={36} color="#15803D" />
-              <Text style={styles.emptyQueueTitle}>All Clear in Sector 1</Text>
+              <Text style={styles.emptyQueueTitle}>All Clear in {assignedSector}</Text>
               <Text style={styles.emptyQueueSubtitle}>
-                No active SOS alerts in your corridor. Stand by for live notifications.
+                No active SOS alerts in your corridor. Stand by for live incoming alerts.
               </Text>
             </View>
           ) : (
             activeAlerts.map((item) => {
-              const isClaimedByMe =
-                item.responder_id === currentVolunteer.id ||
-                item.responder_name?.toLowerCase() === currentVolunteer.name.toLowerCase();
-              const isClaimedByOther = item.status === 'in_progress' && !isClaimedByMe;
+              const claimedByMe = isAlertClaimedByMe(item);
+              const claimedByOther = isAlertClaimedByOther(item);
               const isCritical = item.severity === 'critical';
+              const detailNote = item.notes || item.description || '';
 
+              // DIFFERENT COMPACT UI FOR VOLUNTEERS WHO DID NOT CLAIM THIS ALERT
+              if (claimedByOther) {
+                return (
+                  <View key={item.id} style={styles.alertCardCompactOther}>
+                    <View style={styles.compactOtherHeader}>
+                      <View style={styles.compactOtherLeft}>
+                        <View style={styles.compactOtherIconCircle}>
+                          <Ionicons name="shield-checkmark" size={16} color="#0284C7" />
+                        </View>
+
+                        <View style={{ flex: 1 }}>
+                          <View style={styles.compactOtherTitleRow}>
+                            <Text style={styles.compactOtherPilgrimName}>
+                              {item.pilgrim_name}
+                              {item.pilgrim_age ? `, ${item.pilgrim_age}` : ''}
+                            </Text>
+                            <Text style={styles.compactOtherTimestamp}>
+                              {formatTimeAgo(item.created_at)}
+                            </Text>
+                          </View>
+
+                          <Text style={styles.compactOtherSubtext} numberOfLines={1}>
+                            ⚠️ {item.problem_type}
+                            {detailNote ? ` (${detailNote})` : ''}
+                          </Text>
+
+                          <View style={styles.compactOtherBadgeRow}>
+                            <View style={styles.compactClaimedByBadge}>
+                              <Ionicons name="person" size={10} color="#0369A1" style={{ marginRight: 3 }} />
+                              <Text style={styles.compactClaimedByText}>
+                                Claimed by {item.responder_name || 'Volunteer'}
+                              </Text>
+                            </View>
+                            <Text style={styles.compactLocationText}>
+                              · {item.location_name || 'Corridor'}
+                            </Text>
+                          </View>
+                        </View>
+                      </View>
+
+                      {/* Small Minimal View Map Button */}
+                      <TouchableOpacity
+                        activeOpacity={0.75}
+                        onPress={() => handlePreviewOtherMap(item)}
+                        style={styles.compactViewMapBtn}
+                      >
+                        <Ionicons name="map-outline" size={13} color="#0284C7" />
+                        <Text style={styles.compactViewMapBtnText}>Map</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                );
+              }
+
+              // FULL EXPANDED CARD FOR NEW INCOMING ALERTS OR ALERTS CLAIMED BY THIS VOLUNTEER
               return (
                 <View
                   key={item.id}
@@ -416,13 +574,13 @@ export const VolunteerDashboardScreen: React.FC<
                     styles.alertCard,
                     isCritical
                       ? styles.alertCardCritical
-                      : item.status === 'in_progress'
+                      : claimedByMe
                       ? styles.alertCardInProgress
                       : styles.alertCardMobility,
                   ]}
                 >
                   {/* In Progress Status Badge */}
-                  {item.status === 'in_progress' && (
+                  {claimedByMe && (
                     <View style={styles.inProgressBadge}>
                       <Ionicons
                         name="checkmark"
@@ -441,14 +599,14 @@ export const VolunteerDashboardScreen: React.FC<
                         styles.alertIconCircle,
                         isCritical
                           ? styles.alertIconCircleRed
-                          : item.status === 'in_progress'
+                          : claimedByMe
                           ? styles.alertIconCircleBlue
                           : styles.alertIconCircleAmber,
                       ]}
                     >
                       {isCritical ? (
                         <MaterialIcons name="medical-services" size={22} color="#DC2626" />
-                      ) : item.status === 'in_progress' ? (
+                      ) : claimedByMe ? (
                         <Ionicons name="water-outline" size={22} color="#0284C7" />
                       ) : (
                         <FontAwesome5 name="hands-helping" size={18} color="#FFFFFF" />
@@ -461,14 +619,14 @@ export const VolunteerDashboardScreen: React.FC<
                           {item.pilgrim_name}
                           {item.pilgrim_age ? `, ${item.pilgrim_age}` : ''}
                         </Text>
-                        <Text style={[styles.timestampText, item.status === 'in_progress' && { marginRight: 85 }]}>
+                        <Text style={[styles.timestampText, claimedByMe && { marginRight: 85 }]}>
                           {formatTimeAgo(item.created_at)}
                         </Text>
                       </View>
                       <View style={styles.locationRow}>
                         <Ionicons name="location-outline" size={13} color="#6B7280" />
                         <Text style={styles.locationText}>
-                          {item.distance_away || '180m away'} · {item.location_name || 'Sector 1'}
+                          {item.distance_away || 'Live SOS'} · {item.location_name || 'Corridor'}
                         </Text>
                       </View>
                     </View>
@@ -478,17 +636,17 @@ export const VolunteerDashboardScreen: React.FC<
                   <View
                     style={[
                       styles.reasonBox,
-                      item.status === 'in_progress' && styles.reasonBoxBlue,
+                      claimedByMe && styles.reasonBoxBlue,
                     ]}
                   >
                     <Text
                       style={[
                         styles.reasonText,
-                        item.status === 'in_progress' && styles.reasonTextBlue,
+                        claimedByMe && styles.reasonTextBlue,
                       ]}
                     >
                       ⚠️ {item.problem_type}
-                      {item.description ? ` (${item.description})` : ''}
+                      {detailNote ? ` (${detailNote})` : ''}
                     </Text>
                   </View>
 
@@ -506,12 +664,14 @@ export const VolunteerDashboardScreen: React.FC<
                     )}
                   </View>
 
-                  {/* Primary Actions Based on Lifecycle State */}
-                  {isClaimedByMe ? (
+                  {/* Primary Actions Based on Claim State */}
+                  {claimedByMe ? (
                     <View>
                       <View style={styles.claimedByYouBanner}>
                         <Ionicons name="shield-checkmark" size={14} color="#15803D" style={{ marginRight: 4 }} />
-                        <Text style={styles.claimedByYouBannerText}>Claimed by you</Text>
+                        <Text style={styles.claimedByYouBannerText}>
+                          Claimed by you · En Route
+                        </Text>
                       </View>
 
                       <View style={styles.claimedActionRow}>
@@ -545,12 +705,6 @@ export const VolunteerDashboardScreen: React.FC<
                         </TouchableOpacity>
                       </View>
                     </View>
-                  ) : isClaimedByOther ? (
-                    <View style={styles.claimedByOtherBanner}>
-                      <Text style={styles.claimedByOtherBannerText}>
-                        Claimed by {item.responder_name || 'another responder'}
-                      </Text>
-                    </View>
                   ) : (
                     <TouchableOpacity
                       activeOpacity={0.85}
@@ -564,7 +718,7 @@ export const VolunteerDashboardScreen: React.FC<
                         style={{ marginRight: 8 }}
                       />
                       <Text style={styles.respondNowButtonText}>
-                        Respond Now · ~2 min walk
+                        Respond Now · ~1 min walk
                       </Text>
                     </TouchableOpacity>
                   )}
@@ -578,13 +732,16 @@ export const VolunteerDashboardScreen: React.FC<
         <View style={styles.areaHeaderRow}>
           <View>
             <Text style={styles.areaHeading}>Area Overview</Text>
-            <Text style={styles.areaSubtext}>Sector 1 Corridor · Nearest SOS 180m</Text>
+            <Text style={styles.areaSubtext}>
+              {assignedSector} · {nearestDistance ? `Nearest SOS ${nearestDistance}` : 'No active alerts'}
+            </Text>
           </View>
 
           <TouchableOpacity
             activeOpacity={0.75}
             onPress={() => {
               setActiveClaimedRoute(null);
+              setModalActiveSos(null);
               setSelectedMapPointId(null);
               setMapModalVisible(true);
             }}
@@ -604,10 +761,17 @@ export const VolunteerDashboardScreen: React.FC<
         <View style={styles.mapPreviewWrapper}>
           <VarkariInteractiveMap
             isFullScreen={false}
-            claimedRoute={currentMapRoute}
+            activeSOS={myActiveSosForMap}
+            claimedRoute={myClaimedMapRoute}
             onExpand={() => {
               setSelectedMapPointId(null);
               setMapModalVisible(true);
+            }}
+            onCallVolunteer={() => {
+              if (myClaimedAlert) handleCall(myClaimedAlert.pilgrim_phone, myClaimedAlert.pilgrim_name);
+            }}
+            onResolveSOS={() => {
+              if (myClaimedAlert) handleResolve(myClaimedAlert);
             }}
           />
 
@@ -615,11 +779,13 @@ export const VolunteerDashboardScreen: React.FC<
           <View style={styles.mapLegendOverlay}>
             <View style={styles.legendRow}>
               <View style={styles.legendDotGreen} />
-              <Text style={styles.legendText}>You (Sector 1)</Text>
+              <Text style={styles.legendText}>You ({assignedSector.split(' ')[0]})</Text>
             </View>
             <View style={[styles.legendRow, { marginTop: 4 }]}>
               <View style={styles.legendDotRed} />
-              <Text style={styles.legendText}>{nearbyCount} Nearby Alerts</Text>
+              <Text style={styles.legendText}>
+                {nearbyCount} Nearby Alert{nearbyCount === 1 ? '' : 's'}
+              </Text>
             </View>
           </View>
         </View>
@@ -661,9 +827,15 @@ export const VolunteerDashboardScreen: React.FC<
         onClose={() => {
           setMapModalVisible(false);
           setActiveClaimedRoute(null);
+          setModalActiveSos(null);
         }}
         initialPointId={selectedMapPointId}
-        claimedRoute={currentMapRoute}
+        activeSOS={modalActiveSos || myActiveSosForMap}
+        claimedRoute={activeClaimedRoute || myClaimedMapRoute}
+        onCallVolunteer={(phone) => handleCall(phone)}
+        onResolveSOS={() => {
+          if (myClaimedAlert) handleResolve(myClaimedAlert);
+        }}
       />
     </SafeAreaView>
   );
@@ -786,6 +958,116 @@ const styles = StyleSheet.create({
   dutyTextBusy: {
     color: '#B45309',
   },
+  activeDispatchSectionCard: {
+    backgroundColor: '#0F172A',
+    borderRadius: 20,
+    padding: 16,
+    marginBottom: spacing.md,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 5,
+    borderWidth: 1,
+    borderColor: '#1E293B',
+  },
+  activeDispatchHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  activeDispatchHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  pulseDotRed: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#DC2626',
+    marginRight: 6,
+  },
+  activeDispatchTitle: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#DC2626',
+    letterSpacing: 0.6,
+  },
+  expandHeaderPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    gap: 4,
+  },
+  expandHeaderPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0284C7',
+  },
+  activeDispatchSubtext: {
+    fontSize: 13,
+    color: '#F1F5F9',
+    fontWeight: '700',
+    marginBottom: 10,
+  },
+  topMapEmbedWrapper: {
+    borderRadius: 14,
+    overflow: 'hidden',
+    marginBottom: 10,
+  },
+  topDispatchActionRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  topDispatchNavBtn: {
+    flex: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0284C7',
+    paddingVertical: 10,
+    borderRadius: 12,
+    gap: 6,
+  },
+  topDispatchNavBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  topDispatchCallBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1E293B',
+    paddingVertical: 10,
+    borderRadius: 12,
+    gap: 4,
+  },
+  topDispatchCallBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0284C7',
+  },
+  topDispatchResolveBtn: {
+    flex: 1.2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#064E3B',
+    paddingVertical: 10,
+    borderRadius: 12,
+    gap: 4,
+  },
+  topDispatchResolveBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#34D399',
+  },
   sectionHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -844,6 +1126,102 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 4,
   },
+  // COMPACT CARD FOR ALERTS CLAIMED BY ANOTHER VOLUNTEER
+  alertCardCompactOther: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 16,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  compactOtherHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  compactOtherLeft: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    flex: 1,
+    marginRight: 10,
+  },
+  compactOtherIconCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#E0F2FE',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+    marginTop: 2,
+  },
+  compactOtherTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 2,
+  },
+  compactOtherPilgrimName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  compactOtherTimestamp: {
+    fontSize: 11,
+    color: '#94A3B8',
+    fontWeight: '500',
+  },
+  compactOtherSubtext: {
+    fontSize: 12,
+    color: '#64748B',
+    marginBottom: 4,
+  },
+  compactOtherBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+  },
+  compactClaimedByBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E0F2FE',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  compactClaimedByText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#0369A1',
+  },
+  compactLocationText: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginLeft: 4,
+  },
+  compactViewMapBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    gap: 4,
+  },
+  compactViewMapBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0284C7',
+  },
+
+  // FULL CARD FOR NEW ALERTS OR OWN CLAIMED ALERTS
   alertCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
@@ -1004,17 +1382,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: '#15803D',
-  },
-  claimedByOtherBanner: {
-    backgroundColor: '#F3F4F6',
-    paddingVertical: 8,
-    borderRadius: 10,
-    alignItems: 'center',
-  },
-  claimedByOtherBannerText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#6B7280',
   },
   claimedActionRow: {
     flexDirection: 'row',

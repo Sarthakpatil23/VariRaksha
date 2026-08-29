@@ -360,33 +360,32 @@ export async function claimEmergencyAlert(
 }
 
 /**
- * Mark an emergency alert as Resolved
+ * Mark an emergency alert as Resolved and remove it from database
  */
 export async function resolveEmergencyAlert(
   alertId: string,
   notes?: string,
-): Promise<{ alert: EmergencyAlert | null; error: string | null }> {
+  removeFromDatabase: boolean = true,
+): Promise<{ success: boolean; alert: EmergencyAlert | null; error: string | null }> {
   try {
     const now = new Date().toISOString();
 
-    // 1. Try atomic database RPC
-    try {
-      const { data: rpcData, error: rpcError } = await supabase.rpc(
-        'resolve_emergency_alert',
-        {
-          p_alert_id: alertId,
-          p_notes: notes || 'Assisted pilgrim and verified stability.',
-        },
-      );
+    if (removeFromDatabase) {
+      console.log('[AlertService] Removing resolved alert from database:', alertId);
+      const { error } = await supabase
+        .from('emergency_alerts')
+        .delete()
+        .eq('id', alertId);
 
-      if (!rpcError && rpcData?.success) {
-        return { alert: rpcData.alert as EmergencyAlert, error: null };
+      if (error) {
+        console.error('[AlertService] Delete on resolve error:', error.message);
+        return { success: false, alert: null, error: error.message };
       }
-    } catch {
-      // Fall through to direct update
+
+      return { success: true, alert: null, error: null };
     }
 
-    // 2. Direct update fallback
+    // Direct update fallback if keeping archived record
     const updatePayload: Record<string, any> = {
       status: 'resolved',
       resolved_at: now,
@@ -403,13 +402,35 @@ export async function resolveEmergencyAlert(
 
     if (error) {
       console.error('[AlertService] Resolve error:', error.message);
-      return { alert: null, error: error.message };
+      return { success: false, alert: null, error: error.message };
     }
 
-    return { alert: data as EmergencyAlert, error: null };
+    return { success: true, alert: data as EmergencyAlert, error: null };
   } catch (err: any) {
     console.error('[AlertService] Unexpected resolve error:', err);
-    return { alert: null, error: err.message || 'Network error resolving alert' };
+    return { success: false, alert: null, error: err.message || 'Network error resolving alert' };
+  }
+}
+
+/**
+ * Directly delete an emergency alert from Supabase database
+ */
+export async function deleteEmergencyAlert(
+  alertId: string,
+): Promise<{ success: boolean; error: string | null }> {
+  try {
+    const { error } = await supabase
+      .from('emergency_alerts')
+      .delete()
+      .eq('id', alertId);
+
+    if (error) {
+      console.error('[AlertService] Delete error:', error.message);
+      return { success: false, error: error.message };
+    }
+    return { success: true, error: null };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Network error' };
   }
 }
 
@@ -418,7 +439,7 @@ export async function resolveEmergencyAlert(
  */
 export function subscribeToSingleAlert(
   alertId: string,
-  onUpdate: (alert: EmergencyAlert) => void,
+  onUpdate: (alert: EmergencyAlert | null) => void,
 ): () => void {
   try {
     const channelName = `sos_single_${alertId}_${Date.now()}`;
@@ -433,7 +454,10 @@ export function subscribeToSingleAlert(
           filter: `id=eq.${alertId}`,
         },
         (payload) => {
-          if (payload.new) {
+          if (payload.eventType === 'DELETE') {
+            console.log('[AlertService] Single alert deleted from DB');
+            onUpdate(null);
+          } else if (payload.new) {
             onUpdate(payload.new as EmergencyAlert);
           }
         },

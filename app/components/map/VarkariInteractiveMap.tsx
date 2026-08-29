@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -38,9 +38,10 @@ export interface ActiveSOSMapData {
   lng: number;
   pilgrimName: string;
   problemType: string;
-  status: 'nearby' | 'in_progress' | 'resolved';
+  status: 'nearby' | 'in_progress' | 'arrived' | 'resolved';
   responderName?: string;
   responderPhone?: string;
+  claimedAt?: string;
 }
 
 export interface ClaimedRouteMapData {
@@ -48,6 +49,8 @@ export interface ClaimedRouteMapData {
   volunteerLng: number;
   sosLat: number;
   sosLng: number;
+  claimedAt?: string; // Common database start timestamp for 100% synchronized multi-device simulation
+  durationMs?: number; // Total duration of the road journey (default: 35000ms)
   pilgrimName?: string;
   problemType?: string;
   distance?: string;
@@ -63,6 +66,7 @@ interface VarkariInteractiveMapProps {
   claimedRoute?: ClaimedRouteMapData | null;
   onCallVolunteer?: (phone: string) => void;
   onResolveSOS?: () => void;
+  onVolunteerArrived?: () => void;
 }
 
 export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
@@ -74,6 +78,7 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
   claimedRoute = null,
   onCallVolunteer,
   onResolveSOS,
+  onVolunteerArrived,
 }) => {
   const { t, i18n } = useTranslation();
   const lang = (i18n.language || 'mr') as 'mr' | 'hi' | 'en';
@@ -88,14 +93,16 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
       : null,
   );
 
-  const [simState, setSimState] = useState<{
+  const [navProgress, setNavProgress] = useState<{
     remainingMeters: number;
     etaText: string;
     progressPercent: number;
+    hasArrived: boolean;
   }>({
-    remainingMeters: 180,
-    etaText: '~2 min walk',
+    remainingMeters: 280,
+    etaText: '~1 min walk',
     progressPercent: 0,
+    hasArrived: false,
   });
 
   const webViewRef = useRef<WebView>(null);
@@ -131,12 +138,6 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
     return point.descriptionEn;
   };
 
-  const getLocalizedServices = (point: MapPoint) => {
-    if (isMarathi) return point.servicesMr;
-    if (isHindi) return point.servicesHi;
-    return point.servicesEn;
-  };
-
   // Sync category filter to Leaflet map dynamically without reloading HTML
   useEffect(() => {
     sendMapAction('filter_category', { category: selectedCategory });
@@ -150,17 +151,19 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
           const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
           if (data && data.type === 'marker_click' && data.id) {
             const point = MAP_SERVICE_POINTS.find((p) => p.id === data.id);
-            if (point) {
-              setSelectedPoint(point);
-            }
+            if (point) setSelectedPoint(point);
           } else if (data && data.type === 'pilgrim_click') {
             showPilgrimAlert();
           } else if (data && data.type === 'sim_progress') {
-            setSimState({
+            setNavProgress({
               remainingMeters: data.remainingMeters,
               etaText: data.etaText,
               progressPercent: data.progressPercent,
+              hasArrived: data.hasArrived,
             });
+            if (data.hasArrived && onVolunteerArrived) {
+              onVolunteerArrived();
+            }
           }
         } catch {
           // Ignore
@@ -172,7 +175,7 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
         window.removeEventListener('message', handleWebMessage);
       };
     }
-  }, [isMarathi, isHindi]);
+  }, [isMarathi, isHindi, onVolunteerArrived]);
 
   const showPilgrimAlert = () => {
     Vibration.vibrate(15);
@@ -365,7 +368,7 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
       box-shadow: 0 3px 6px rgba(0,0,0,0.3);
     }
 
-    /* Moving Volunteer Tactical Pulse */
+    /* Moving Volunteer Tactical Road Avatar */
     .volunteer-moving-pin {
       position: relative;
       width: 48px;
@@ -374,7 +377,6 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
       align-items: center;
       justify-content: center;
       transform: translate(-50%, -50%);
-      transition: all 0.35s ease-out;
     }
     .vol-pulse-ring {
       position: absolute;
@@ -413,16 +415,6 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
       transition: background 0.3s;
     }
 
-    /* Tactical Route Dash Animation */
-    .tactical-route {
-      stroke-dasharray: 8, 8;
-      animation: dashFlow 1.2s linear infinite;
-    }
-    @keyframes dashFlow {
-      from { stroke-dashoffset: 16; }
-      to { stroke-dashoffset: 0; }
-    }
-
     @keyframes radarPulse {
       0% { transform: scale(0.6); opacity: 0.9; }
       100% { transform: scale(1.9); opacity: 0; }
@@ -442,14 +434,14 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
       attributionControl: false
     }).setView([${pilgrimLat}, ${pilgrimLng}], ${isFullScreen ? 15 : 14});
 
-    // High performance OpenStreetMap tiles
+    // OpenStreetMap tiles
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19
     }).addTo(map);
 
-    // Full 256 km Palkhi Route from Alandi/Pune to Pandharpur
+    // Full Palkhi Route
     var fullRouteCoords = ${fullRouteJson};
-    var fullPolyline = L.polyline(fullRouteCoords, {
+    L.polyline(fullRouteCoords, {
       color: '#2E7D32',
       weight: 3.5,
       opacity: 0.65,
@@ -457,11 +449,9 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
       lineCap: 'round'
     }).addTo(map);
 
-    // Active Highway Segment (Phaltan -> Wakhari -> Pandharpur)
+    // Active Highway Segment
     var activeRouteCoords = ${activeRouteJson};
-
-    // Glowing Underlay Route
-    var polylineGlow = L.polyline(activeRouteCoords, {
+    L.polyline(activeRouteCoords, {
       color: '#FFB74D',
       weight: 8,
       opacity: 0.5,
@@ -469,8 +459,7 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
       lineJoin: 'round'
     }).addTo(map);
 
-    // Precise Street Highway Polyline
-    var polyline = L.polyline(activeRouteCoords, {
+    L.polyline(activeRouteCoords, {
       color: '#E65100',
       weight: 5,
       opacity: 0.95,
@@ -478,7 +467,7 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
       lineJoin: 'round'
     }).addTo(map);
 
-    // SVG Vector Pin Templates
+    // Vector Pin Helper
     function createVectorPinSvg(color, iconSvg) {
       return '<svg width="36" height="42" viewBox="0 0 36 42" fill="none" xmlns="http://www.w3.org/2000/svg">' +
         '<path d="M18 42C18 42 34 25.5 34 16C34 7.16344 26.8366 0 18 0C9.16344 0 2 7.16344 2 16C2 25.5 18 42 18 42Z" fill="' + color + '"/>' +
@@ -501,10 +490,6 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
           return '<path d="M11 11H23V18H11V11ZM11 18V21M23 18V21M9 13V21M9 13C8 13 7 13.5 7 14.5V21" stroke="' + color + '" stroke-width="2" stroke-linecap="round"/>';
         case 'toilet':
           return '<path d="M15 9C16.1 9 17 8.1 17 7C17 5.9 16.1 5 15 5C13.9 5 13 5.9 13 7C13 8.1 13.9 9 15 9ZM12 12V16H14V21H16V16H18V12C18 10.9 17.1 10 16 10H14C12.9 10 12 10.9 12 12Z" fill="' + color + '"/>';
-        case 'religious':
-          return '<path d="M18 7L24 12H12L18 7ZM13 13H23V21H13V13ZM18 5V7M16 5H20" stroke="' + color + '" stroke-width="2" stroke-linecap="round"/>';
-        case 'destination':
-          return '<path d="M12 7L20 11L12 15V22M12 7V22" stroke="' + color + '" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>';
         default:
           return '<circle cx="18" cy="16" r="4" fill="' + color + '"/>';
       }
@@ -551,37 +536,64 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
       sosMarker = L.marker([activeSosData.lat, activeSosData.lng], { icon: sosIcon, zIndexOffset: 1000 }).addTo(map);
     }
 
-    // Handle Claimed Direct Tactical Route & LIVE APPROACHING SIMULATION
+    // ========================================================
+    // ULTRA-SMOOTH TIME-SYNCHRONIZED ROAD NAVIGATION SIMULATION
+    // ========================================================
     var claimedRouteData = ${claimedRouteJson};
     var liveVolMarker = null;
-    var simulationInterval = null;
-    var navRoutePolyline = null;
-    var routeGlow = null;
+
+    // Helper: Haversine distance in meters
+    function getHaversineDist(p1, p2) {
+      var R = 6371000;
+      var dLat = (p2[0] - p1[0]) * Math.PI / 180;
+      var dLng = (p2[1] - p1[1]) * Math.PI / 180;
+      var a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(p1[0] * Math.PI / 180) * Math.cos(p2[0] * Math.PI / 180) *
+              Math.sin(dLng/2) * Math.sin(dLng/2);
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    }
+
+    // Generate smooth realistic road curve path between start and destination
+    function generateSmoothRoadWaypoints(start, dest) {
+      var dLat = dest[0] - start[0];
+      var dLng = dest[1] - start[1];
+      return [
+        start,
+        [start[0] + dLat * 0.20, start[1] + dLng * 0.08],
+        [start[0] + dLat * 0.45, start[1] + dLng * 0.32],
+        [start[0] + dLat * 0.70, start[1] + dLng * 0.68],
+        [start[0] + dLat * 0.88, start[1] + dLng * 0.92],
+        dest
+      ];
+    }
 
     if (claimedRouteData && claimedRouteData.volunteerLat && claimedRouteData.sosLat) {
       var volStart = [claimedRouteData.volunteerLat, claimedRouteData.volunteerLng];
       var sosTarget = [claimedRouteData.sosLat, claimedRouteData.sosLng];
 
-      // Route Glow
-      routeGlow = L.polyline([volStart, sosTarget], {
+      var roadWaypoints = generateSmoothRoadWaypoints(volStart, sosTarget);
+
+      // Draw stable static road navigation polyline
+      L.polyline(roadWaypoints, {
         color: '#0284C7',
-        weight: 8,
+        weight: 7,
         opacity: 0.35,
-        lineCap: 'round'
+        lineCap: 'round',
+        lineJoin: 'round'
       }).addTo(map);
 
-      // Tactical Flowing Navigation Polyline
-      navRoutePolyline = L.polyline([volStart, sosTarget], {
+      L.polyline(roadWaypoints, {
         color: '#0284C7',
-        weight: 4.5,
-        className: 'tactical-route',
-        lineCap: 'round'
+        weight: 4,
+        dashArray: '6, 8',
+        lineCap: 'round',
+        lineJoin: 'round'
       }).addTo(map);
 
-      // Volunteer Moving Pin
+      // Volunteer Live Pin
       var volHtml = '<div class="volunteer-moving-pin" id="vol-pin">' +
         '<div class="vol-pulse-ring"></div>' +
-        '<div class="vol-status-badge" id="vol-hud">🏃 180m · ~2 min</div>' +
+        '<div class="vol-status-badge" id="vol-hud">🏃 280m · ~1 min</div>' +
         '<div class="vol-core">🧑‍🤝‍🧑</div>' +
         '</div>';
 
@@ -595,50 +607,93 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
       liveVolMarker = L.marker(volStart, { icon: volDivIcon, zIndexOffset: 950 }).addTo(map);
       map.fitBounds([volStart, sosTarget], { padding: [60, 60] });
 
-      // SIMULATION OF VOLUNTEER APPROACHING THE SOS LOCATION IN REAL TIME
-      var totalSteps = 80;
-      var currentStep = 0;
-      var initialDist = 180;
+      // Compute Segment Metrics
+      var segDists = [];
+      var cumDists = [0];
+      var totalDist = 0;
+      for (var i = 0; i < roadWaypoints.length - 1; i++) {
+        var d = getHaversineDist(roadWaypoints[i], roadWaypoints[i+1]);
+        segDists.push(d);
+        totalDist += d;
+        cumDists.push(totalDist);
+      }
+      if (totalDist === 0) totalDist = 1;
 
-      simulationInterval = setInterval(function() {
-        currentStep = (currentStep + 1) % (totalSteps + 15);
-        var progress = Math.min(1.0, currentStep / totalSteps);
+      // TIME-SYNCHRONIZED CALCULATION
+      var claimedAtMs = new Date(claimedRouteData.claimedAt || new Date().toISOString()).getTime();
+      var durationMs = claimedRouteData.durationMs || 35000; // 35 seconds smooth journey
+      var lastBridgeEmit = 0;
+      var hasNotifiedArrival = false;
 
-        // Smooth position interpolation
-        var curLat = volStart[0] + (sosTarget[0] - volStart[0]) * progress;
-        var curLng = volStart[1] + (sosTarget[1] - volStart[1]) * progress;
+      function renderFrame() {
+        var now = Date.now();
+        var elapsed = Math.max(0, now - claimedAtMs);
+        var progress = Math.min(1.0, elapsed / durationMs);
 
+        // Compute current coordinate along waypoints
+        var targetDist = progress * totalDist;
+        var curLat = sosTarget[0];
+        var curLng = sosTarget[1];
+
+        for (var s = 0; s < cumDists.length - 1; s++) {
+          if (targetDist <= cumDists[s+1]) {
+            var segLen = segDists[s] || 1;
+            var subProgress = (targetDist - cumDists[s]) / segLen;
+            var p1 = roadWaypoints[s];
+            var p2 = roadWaypoints[s+1];
+            curLat = p1[0] + (p2[0] - p1[0]) * subProgress;
+            curLng = p1[1] + (p2[1] - p1[1]) * subProgress;
+            break;
+          }
+        }
+
+        if (progress >= 1.0) {
+          curLat = sosTarget[0];
+          curLng = sosTarget[1];
+        }
+
+        // Smooth position update
         if (liveVolMarker) {
           liveVolMarker.setLatLng([curLat, curLng]);
         }
 
-        var remainingMeters = Math.max(0, Math.round(initialDist * (1 - progress)));
-        var etaText = remainingMeters > 100 ? '~2 min walk' : remainingMeters > 40 ? '~1 min walk' : remainingMeters > 10 ? '< 30s' : 'Arrived!';
-        var badgeText = remainingMeters > 10 ? ('🏃 ' + remainingMeters + 'm · ' + etaText) : '🎯 Arrived at Pilgrim';
+        var isArrived = progress >= 1.0;
+        var remainingMeters = Math.max(0, Math.round(totalDist * (1 - progress)));
+        var remainingSec = Math.max(0, Math.round((durationMs - elapsed) / 1000));
+        var etaText = remainingSec > 25 ? '~1 min walk' : remainingSec > 3 ? ('~' + remainingSec + 's') : 'Arrived!';
 
         var hudEl = document.getElementById('vol-hud');
         if (hudEl) {
-          hudEl.innerHTML = badgeText;
-          if (remainingMeters <= 10) {
-            hudEl.style.background = '#DC2626';
+          if (isArrived) {
+            hudEl.innerHTML = '🎯 ARRIVED ON SCENE';
+            hudEl.style.background = '#059669';
           } else {
+            hudEl.innerHTML = '🏃 ' + remainingMeters + 'm · ' + etaText;
             hudEl.style.background = '#15803D';
           }
         }
 
-        if (navRoutePolyline && routeGlow) {
-          navRoutePolyline.setLatLngs([[curLat, curLng], sosTarget]);
-          routeGlow.setLatLngs([[curLat, curLng], sosTarget]);
-        }
+        // Throttle React Native bridge events to once every 1000ms
+        if (now - lastBridgeEmit >= 1000 || isArrived) {
+          lastBridgeEmit = now;
+          notifyApp({
+            type: 'sim_progress',
+            remainingMeters: remainingMeters,
+            etaText: etaText,
+            progressPercent: Math.round(progress * 100),
+            hasArrived: isArrived,
+          });
 
-        // Emit simulation progress back to React Native
-        notifyApp({
-          type: 'sim_progress',
-          remainingMeters: remainingMeters,
-          etaText: etaText,
-          progressPercent: Math.round(progress * 100)
-        });
-      }, 400);
+          if (isArrived && !hasNotifiedArrival) {
+            hasNotifiedArrival = true;
+            notifyApp({ type: 'volunteer_arrived' });
+          }
+        }
+      }
+
+      // Smooth 50ms interval animation
+      setInterval(renderFrame, 50);
+      renderFrame();
     } else if (activeSosData && activeSosData.lat && activeSosData.lng) {
       map.setView([activeSosData.lat, activeSosData.lng], 16, { animate: true });
     }
@@ -653,9 +708,7 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
       markerMap = {};
 
       allPoints.forEach(function(p) {
-        if (categoryFilter !== 'all' && p.category !== categoryFilter) {
-          return;
-        }
+        if (categoryFilter !== 'all' && p.category !== categoryFilter) return;
 
         var iconSvgContent = getCategorySvgIcon(p.iconType, p.badgeColor);
         var pinSvg = createVectorPinSvg(p.badgeColor, iconSvgContent);
@@ -730,17 +783,19 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
       if (data.type === 'marker_click' && data.id) {
         Vibration.vibrate(20);
         const point = MAP_SERVICE_POINTS.find((p) => p.id === data.id);
-        if (point) {
-          setSelectedPoint(point);
-        }
+        if (point) setSelectedPoint(point);
       } else if (data.type === 'pilgrim_click') {
         showPilgrimAlert();
       } else if (data.type === 'sim_progress') {
-        setSimState({
+        setNavProgress({
           remainingMeters: data.remainingMeters,
           etaText: data.etaText,
           progressPercent: data.progressPercent,
+          hasArrived: data.hasArrived,
         });
+        if (data.hasArrived && onVolunteerArrived) {
+          onVolunteerArrived();
+        }
       }
     } catch {
       // Ignore
@@ -786,7 +841,7 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
     );
   };
 
-  const isEnRoute = Boolean(claimedRoute || (activeSOS && activeSOS.status === 'in_progress'));
+  const isEnRoute = Boolean(claimedRoute || (activeSOS && (activeSOS.status === 'in_progress' || activeSOS.status === 'arrived')));
 
   return (
     <View style={[styles.container, isFullScreen && styles.fullScreenContainer]}>
@@ -803,7 +858,9 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
 
           <View style={styles.headerTitleBox}>
             <Text style={styles.headerTitleText}>
-              {isEnRoute
+              {navProgress.hasArrived
+                ? '🎯 VOLUNTEER ON SCENE'
+                : isEnRoute
                 ? '🚨 LIVE RESPONDER DISPATCH'
                 : activeSOS
                 ? '🚨 EMERGENCY SOS'
@@ -814,8 +871,10 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
                 : 'Wari Palkhi Route'}
             </Text>
             <Text style={styles.headerSubtitleText}>
-              {isEnRoute
-                ? `Approaching · ${simState.remainingMeters}m left (${simState.etaText})`
+              {navProgress.hasArrived
+                ? 'Assistance in progress at pilgrim location'
+                : isEnRoute
+                ? `Road Navigation · ${navProgress.remainingMeters}m (${navProgress.etaText})`
                 : activeSOS
                 ? activeSOS.problemType
                 : isMarathi
@@ -836,42 +895,60 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
         </View>
       )}
 
-      {/* LIVE TACTICAL DISPATCH HUD OVERLAY (Approaching Simulation Banner) */}
+      {/* LIVE TACTICAL ROAD NAVIGATION HUD OVERLAY */}
       {isEnRoute && (
         <View style={styles.tacticalHudBanner}>
           <View style={styles.hudTopRow}>
-            <View style={styles.hudBadgeMoving}>
-              <View style={styles.pulseDotGreen} />
-              <Text style={styles.hudBadgeText}>
-                {simState.remainingMeters <= 10 ? 'ARRIVED ON SCENE' : 'EN ROUTE / APPROACHING'}
+            <View
+              style={[
+                styles.hudBadgeMoving,
+                navProgress.hasArrived && styles.hudBadgeArrived,
+              ]}
+            >
+              <View
+                style={[
+                  styles.pulseDotGreen,
+                  navProgress.hasArrived && { backgroundColor: '#FFFFFF' },
+                ]}
+              />
+              <Text
+                style={[
+                  styles.hudBadgeText,
+                  navProgress.hasArrived && { color: '#FFFFFF' },
+                ]}
+              >
+                {navProgress.hasArrived ? 'VOLUNTEER ARRIVED' : 'MOVING ALONG ROAD'}
               </Text>
             </View>
 
             <Text style={styles.hudDistanceText}>
-              {simState.remainingMeters <= 10
-                ? 'At Pilgrim Location'
-                : `${simState.remainingMeters}m (${simState.etaText})`}
+              {navProgress.hasArrived
+                ? 'At SOS Location'
+                : `${navProgress.remainingMeters}m (${navProgress.etaText})`}
             </Text>
           </View>
 
-          {/* Tactical Progress Bar */}
+          {/* Road Progress Bar */}
           <View style={styles.progressBarBg}>
             <View
               style={[
                 styles.progressBarFill,
-                { width: `${Math.max(5, simState.progressPercent)}%` },
+                { width: `${Math.max(5, navProgress.progressPercent)}%` },
+                navProgress.hasArrived && { backgroundColor: '#10B981' },
               ]}
             />
           </View>
 
           <View style={styles.hudBottomRow}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.hudSubtitle}>
-                {activeSOS?.responderName
+              <Text style={styles.hudSubtitle} numberOfLines={1}>
+                {navProgress.hasArrived
+                  ? 'Volunteer is with the pilgrim on scene'
+                  : activeSOS?.responderName
                   ? `Responder: ${activeSOS.responderName}`
                   : claimedRoute?.pilgrimName
                   ? `Navigating to: ${claimedRoute.pilgrimName}`
-                  : 'Responder assigned & moving towards incident'}
+                  : 'Approaching SOS location along road'}
               </Text>
             </View>
 
@@ -1066,7 +1143,7 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
               <Ionicons name="expand" size={13} color={colors.surface} />
               <Text style={styles.expandButtonText}>
                 {isEnRoute
-                  ? `Live Tactical (${simState.remainingMeters}m)`
+                  ? `Road Nav (${navProgress.remainingMeters}m)`
                   : isMarathi
                   ? 'नकाशा उघडा'
                   : 'Open Map'}
@@ -1279,6 +1356,9 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     borderRadius: 10,
   },
+  hudBadgeArrived: {
+    backgroundColor: '#059669',
+  },
   pulseDotGreen: {
     width: 8,
     height: 8,
@@ -1409,7 +1489,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   mapFramePreview: {
-    height: 205,
+    height: 215,
     borderRadius: 16,
     borderWidth: 1.5,
     borderColor: '#EFE2D3',

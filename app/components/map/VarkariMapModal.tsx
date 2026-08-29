@@ -12,6 +12,7 @@ interface VarkariMapModalProps {
   claimedRoute?: ClaimedRouteMapData | null;
   onCallVolunteer?: (phone: string) => void;
   onResolveSOS?: () => void;
+  onVolunteerArrived?: () => void;
 }
 
 export const VarkariMapModal: React.FC<VarkariMapModalProps> = ({
@@ -22,6 +23,7 @@ export const VarkariMapModal: React.FC<VarkariMapModalProps> = ({
   claimedRoute = null,
   onCallVolunteer,
   onResolveSOS,
+  onVolunteerArrived,
 }) => {
   return (
     <Modal
@@ -39,6 +41,7 @@ export const VarkariMapModal: React.FC<VarkariMapModalProps> = ({
           claimedRoute={claimedRoute}
           onCallVolunteer={onCallVolunteer}
           onResolveSOS={onResolveSOS}
+          onVolunteerArrived={onVolunteerArrived}
         />
       </SafeAreaView>
     </Modal>

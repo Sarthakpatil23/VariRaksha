@@ -150,30 +150,41 @@ export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
 
     // 1. Supabase Realtime Single Channel
     const unsubscribe = subscribeToSingleAlert(alertId, (updated) => {
-      console.log('[HomeSOSScreen] Realtime alert update received:', updated.status, updated.responder_name);
+      console.log('[HomeSOSScreen] Realtime alert update received:', updated?.status, updated?.responder_name);
+      if (!updated || updated.status === 'resolved') {
+        Vibration.vibrate([0, 100, 50, 100]);
+        setActiveSosAlert(null);
+        Alert.alert(
+          'Emergency Resolved',
+          'Your emergency assistance has been completed and safely closed.',
+        );
+        return;
+      }
+
       setActiveSosAlert(updated);
       if (updated.status === 'in_progress') {
         Vibration.vibrate([0, 200, 100, 200]);
-      } else if (updated.status === 'resolved') {
-        Vibration.vibrate(100);
       }
     });
 
     // 2. Fast 3.5s Polling Fallback to guarantee immediate response
     const pollInterval = setInterval(() => {
       fetchAlertById(alertId).then((fresh) => {
-        if (fresh) {
-          setActiveSosAlert((prev) => {
-            if (prev && fresh.status !== prev.status) {
-              if (fresh.status === 'in_progress') {
-                Vibration.vibrate([0, 200, 100, 200]);
-              } else if (fresh.status === 'resolved') {
-                Vibration.vibrate(100);
-              }
-            }
-            return fresh;
-          });
+        if (!fresh) {
+          setActiveSosAlert(null);
+          return;
         }
+
+        setActiveSosAlert((prev) => {
+          if (prev && fresh.status !== prev.status) {
+            if (fresh.status === 'in_progress') {
+              Vibration.vibrate([0, 200, 100, 200]);
+            } else if (fresh.status === 'resolved') {
+              Vibration.vibrate(100);
+            }
+          }
+          return fresh;
+        });
       });
     }, 3500);
 
@@ -265,17 +276,19 @@ export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
           </View>
         </View>
 
-        {/* Live Active SOS Incident Banner on Home Screen */}
+        {/* LIVE SOS ALERT NOTIFICATION BANNER */}
         {activeSosAlert && (
           <TouchableOpacity
-            activeOpacity={0.9}
+            activeOpacity={0.88}
             onPress={() => setMapModalVisible(true)}
             style={[
               styles.homeSosBanner,
-              activeSosAlert.status === 'in_progress'
-                ? styles.homeSosBannerClaimed
-                : activeSosAlert.status === 'resolved'
+              activeSosAlert.status === 'resolved'
                 ? styles.homeSosBannerResolved
+                : (activeSosAlert.status as any) === 'arrived'
+                ? styles.homeSosBannerArrived
+                : activeSosAlert.status === 'in_progress'
+                ? styles.homeSosBannerClaimed
                 : styles.homeSosBannerActive,
             ]}
           >
@@ -284,8 +297,10 @@ export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
                 name={
                   activeSosAlert.status === 'resolved'
                     ? 'checkmark-circle'
+                    : (activeSosAlert.status as any) === 'arrived'
+                    ? 'checkmark-done-circle'
                     : activeSosAlert.status === 'in_progress'
-                    ? 'shield-checkmark'
+                    ? 'navigate-circle'
                     : 'warning'
                 }
                 size={22}
@@ -295,6 +310,8 @@ export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
                 <Text style={styles.homeSosBannerTitle}>
                   {activeSosAlert.status === 'resolved'
                     ? 'EMERGENCY RESOLVED'
+                    : (activeSosAlert.status as any) === 'arrived'
+                    ? '🎯 VOLUNTEER ARRIVED'
                     : activeSosAlert.status === 'in_progress'
                     ? 'VOLUNTEER EN ROUTE'
                     : '🚨 SOS ACTIVE'}
@@ -302,8 +319,10 @@ export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
                 <Text style={styles.homeSosBannerSubtext} numberOfLines={1}>
                   {activeSosAlert.status === 'resolved'
                     ? 'Responder completed assistance.'
+                    : (activeSosAlert.status as any) === 'arrived'
+                    ? `${activeSosAlert.responder_name || 'Volunteer'} has arrived at your location on scene.`
                     : activeSosAlert.status === 'in_progress'
-                    ? `Assigned: ${activeSosAlert.responder_name || 'Volunteer'} · Help is coming`
+                    ? `Assigned: ${activeSosAlert.responder_name || 'Volunteer'} · Walking to your location`
                     : `${activeSosAlert.problem_type} · Searching nearby responder...`}
                 </Text>
               </View>
@@ -473,23 +492,29 @@ export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
                         status: activeSosAlert.status,
                         responderName: activeSosAlert.responder_name,
                         responderPhone: activeSosAlert.responder_phone,
+                        claimedAt: activeSosAlert.claimed_at,
                       }
                     : null
                 }
                 claimedRoute={
-                  activeSosAlert && activeSosAlert.status === 'in_progress'
+                  activeSosAlert && (activeSosAlert.status === 'in_progress' || (activeSosAlert.status as any) === 'arrived')
                     ? {
-                        volunteerLat: 17.6854,
-                        volunteerLng: 75.3211,
+                        volunteerLat: (activeSosAlert.latitude || 17.712) + 0.0022,
+                        volunteerLng: (activeSosAlert.longitude || 75.241) - 0.0018,
                         sosLat: activeSosAlert.latitude || 17.712,
                         sosLng: activeSosAlert.longitude || 75.241,
+                        claimedAt: activeSosAlert.claimed_at || activeSosAlert.updated_at || new Date().toISOString(),
+                        durationMs: 38000,
                         pilgrimName: activeSosAlert.pilgrim_name,
                         problemType: activeSosAlert.problem_type,
-                        distance: activeSosAlert.distance_away || '180m away',
-                        eta: '~2 min walk',
+                        distance: activeSosAlert.distance_away || '280m away',
+                        eta: '~1 min walk',
                       }
                     : null
                 }
+                onVolunteerArrived={() => {
+                  setActiveSosAlert((prev) => (prev ? { ...prev, status: 'arrived' as any } : null));
+                }}
               />
             </View>
 
@@ -788,23 +813,29 @@ export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
                 status: activeSosAlert.status,
                 responderName: activeSosAlert.responder_name,
                 responderPhone: activeSosAlert.responder_phone,
+                claimedAt: activeSosAlert.claimed_at,
               }
             : null
         }
         claimedRoute={
-          activeSosAlert && activeSosAlert.status === 'in_progress'
+          activeSosAlert && (activeSosAlert.status === 'in_progress' || (activeSosAlert.status as any) === 'arrived')
             ? {
-                volunteerLat: 17.6854,
-                volunteerLng: 75.3211,
+                volunteerLat: (activeSosAlert.latitude || 17.712) + 0.0022,
+                volunteerLng: (activeSosAlert.longitude || 75.241) - 0.0018,
                 sosLat: activeSosAlert.latitude || 17.712,
                 sosLng: activeSosAlert.longitude || 75.241,
+                claimedAt: activeSosAlert.claimed_at || activeSosAlert.updated_at || new Date().toISOString(),
+                durationMs: 38000,
                 pilgrimName: activeSosAlert.pilgrim_name,
                 problemType: activeSosAlert.problem_type,
-                distance: activeSosAlert.distance_away || '180m away',
-                eta: '~2 min walk',
+                distance: activeSosAlert.distance_away || '280m away',
+                eta: '~1 min walk',
               }
             : null
         }
+        onVolunteerArrived={() => {
+          setActiveSosAlert((prev) => (prev ? { ...prev, status: 'arrived' as any } : null));
+        }}
         onCallVolunteer={(phone) => {
           Alert.alert('Calling Responder', `Dialing ${phone}...`);
         }}
@@ -853,6 +884,9 @@ const styles = StyleSheet.create({
   },
   homeSosBannerClaimed: {
     backgroundColor: '#1E40AF',
+  },
+  homeSosBannerArrived: {
+    backgroundColor: '#059669',
   },
   homeSosBannerResolved: {
     backgroundColor: '#15803D',
