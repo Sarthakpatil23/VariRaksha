@@ -1,423 +1,246 @@
-# Variraksha — Web + Mobile Architecture Execution Plan
+# VariRaksha — Cross-Platform (App + Web + Supabase) Architecture Specification
 
 ## 1. Objective
 
-Build a web application alongside the existing React Native mobile application without creating two independent systems.
+Build a unified emergency safety ecosystem for the Pandharpur Wari pilgrimage by connecting an **Expo React Native mobile application** and a **Next.js web application** to a single **Supabase backend**.
 
-The mobile app and website should act as two clients of the same backend and data layer. The goal is to keep user data, emergency events, profiles, statuses, and other shared functionality synchronized across both platforms.
-
-The architecture should remain simple enough to implement quickly for the hackathon while being extensible after the event.
-
----
-
-## 2. Recommended High-Level Architecture
-
-The system should have four major layers:
-
-**Mobile Client**
-- Existing React Native + Expo application.
-- Handles mobile-specific capabilities such as offline storage, Bluetooth/BLE, GPS, camera/QR scanning, and notifications.
-- Continues to be the primary client for functionality that depends on native device capabilities.
-
-**Web Client**
-- New Next.js application.
-- Provides browser-based access to shared functionality.
-- Acts as the fallback when a user scans a QR code without having the mobile application installed.
-- Provides dashboards and interfaces that are more convenient on larger screens.
-
-**Backend / Data Layer**
-- Supabase as the shared backend platform.
-- PostgreSQL as the main database.
-- Supabase Auth for authentication.
-- Supabase Realtime for live synchronization.
-- Supabase Storage / Edge Functions only where required.
-
-**Integration Layer**
-- HTTPS-based QR links.
-- Deep linking / Universal Links / Android App Links for opening the mobile application when installed.
-- Shared identifiers and data contracts between the web and mobile clients.
+The mobile app and web application act as two purpose-built interfaces into the same underlying data:
+- **Mobile Client:** Native-first emergency SOS, offline SQLite caching, simulated BLE mesh communication, GPS tracking, and push notifications.
+- **Web Client:** Universal QR-based emergency card viewer (`/p/[id]`), real-time responder and volunteer triage dashboard (`/dashboard`), and administrative monitoring.
+- **Supabase Backend:** PostgreSQL database, Phone/OTP Authentication, Row Level Security (RLS), and Realtime WebSocket subscriptions for instant synchronization.
 
 ---
 
-## 3. Core Architectural Principle
+## 2. System Architecture & Repository Layout
 
-There should be **one source of truth** for shared online data.
+### Repository Structure
+A multi-folder workspace structure within a single repository keeps shared contracts and deployments organized:
 
-Avoid maintaining separate databases for the website and mobile app.
-
-The desired flow is:
-
-    React Native App ──┐
-                       │
-                       ▼
-                    Supabase
-                       ▲
-                       │
-    Next.js Website ──┘
-
-Both clients should read and update the same backend data.
-
-This means a change made from one client can be reflected in the other through the backend and realtime synchronization.
-
----
-
-## 4. Execution Plan
-
-### Phase 1 — Audit the Existing Mobile Application
-
-Before building the website, inspect the existing React Native implementation.
-
-Identify:
-
-- Existing Supabase configuration.
-- Existing database tables and relationships.
-- Authentication flow.
-- User and pilgrim identifiers.
-- Medical/profile data.
-- SOS/emergency data and operations.
-- Volunteer-related functionality.
-- Existing realtime subscriptions.
-- Existing QR/NFC payload structure.
-- Existing APIs or Edge Functions.
-- Any offline synchronization logic.
-
-Do not redesign existing working functionality unnecessarily.
-
-The purpose of this phase is to understand what is already implemented and make the website consume the same system.
+```text
+variraksha/
+├── app/                        # Mobile: Expo React Native application
+│   ├── components/             # Mobile UI components (Chatbot, VoiceBlob, Cards)
+│   ├── constants/              # Theme tokens (Saffron, Maroon, Gold, Typography)
+│   ├── lib/                    # Supabase client, SQLite helpers, UserStore
+│   ├── locales/                # Multi-language translations (en, mr, hi)
+│   ├── navigation/             # Role navigators & Deep linking configuration
+│   ├── screens/                # Mobile screens (Onboarding, SOS, Dindi, Medical, etc.)
+│   └── types/                  # Canonical TypeScript interfaces
+├── web/                        # Web: Next.js + Tailwind CSS application
+│   ├── src/
+│   │   ├── app/                # App Router (/p/[id] emergency card, /dashboard, /sos)
+│   │   ├── components/         # Web UI components & Realtime map/radar
+│   │   ├── lib/                # Web Supabase client & shared helpers
+│   │   └── types/              # Types aligned with backend schemas
+├── supabase/                   # Backend: Migrations & Schema definitions
+│   └── migrations/             # SQL DDL, RLS policies, triggers, seed data
+├── assets/                     # Shared branding, images, and audio assets
+├── app.json                    # Expo config (deep linking scheme & app links)
+└── package.json                # Mobile dependencies & workspace scripts
+```
 
 ---
 
-### Phase 2 — Establish the Shared Backend Contract
+## 3. Canonical Data Models & Role Standards
 
-Define the backend as the common contract for both clients.
+To prevent naming divergences between PostgreSQL, Mobile, and Web, all systems adhere to the following **canonical enum and table schemas**:
 
-For every shared feature, determine:
+### Canonical User Roles
+```sql
+CREATE TYPE user_role AS ENUM ('varkari', 'dindi_leader', 'volunteer', 'medical_staff', 'admin');
+```
 
-- What data is stored.
-- Which table/entity owns the data.
-- Who can read it.
-- Who can modify it.
-- Which fields represent state/status.
-- Which actions require realtime updates.
-- Which operations must be protected by authentication or authorization.
+### PostgreSQL Database Schema
+```sql
+-- 1. Profiles (Pilgrims, Leaders, Volunteers, Medical Staff)
+CREATE TABLE profiles (
+    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    full_name TEXT NOT NULL,
+    mobile_number TEXT UNIQUE NOT NULL,
+    role user_role NOT NULL DEFAULT 'varkari',
+    preferred_language TEXT NOT NULL DEFAULT 'mr', -- 'mr', 'hi', 'en'
+    emergency_card_id TEXT UNIQUE NOT NULL,        -- Alphanumeric public QR ID
+    dindi_group_id UUID REFERENCES dindi_groups(id) ON DELETE SET NULL,
+    age INT,
+    gender TEXT,
+    avatar_url TEXT,
+    is_onboarded BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
 
-Use PostgreSQL relationships, constraints, indexes, and Row Level Security where appropriate.
+-- 2. Medical Profiles (Linked to Pilgrim)
+CREATE TABLE medical_profiles (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    profile_id UUID UNIQUE NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    blood_group TEXT NOT NULL,                     -- e.g. 'B+', 'O+', 'A+'
+    allergies TEXT[] DEFAULT '{}',
+    chronic_conditions TEXT[] DEFAULT '{}',
+    current_medications TEXT[] DEFAULT '{}',
+    organ_donor BOOLEAN DEFAULT FALSE,
+    critical_notes TEXT,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
 
-The mobile and web applications should not independently invent different representations of the same data.
+-- 3. Emergency Contacts
+CREATE TABLE emergency_contacts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    profile_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    relationship TEXT NOT NULL,
+    phone_number TEXT NOT NULL,
+    is_primary BOOLEAN DEFAULT FALSE
+);
 
----
+-- 4. Dindi Groups (Pilgrim groups marching together)
+CREATE TABLE dindi_groups (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,                            -- e.g. 'Dindi #12 - Sant Tukaram'
+    leader_id UUID REFERENCES profiles(id),
+    leader_phone TEXT NOT NULL,
+    route_sector TEXT NOT NULL,                    -- e.g. 'Wakhari -> Phaltan'
+    current_lat DOUBLE PRECISION,
+    current_lng DOUBLE PRECISION,
+    total_members INT DEFAULT 1,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
 
-### Phase 3 — Build the Next.js Web Client
+-- 5. SOS & Emergency Events (Realtime Triggered)
+CREATE TABLE sos_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    pilgrim_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    dindi_group_id UUID REFERENCES dindi_groups(id),
+    status TEXT NOT NULL DEFAULT 'active',         -- 'active', 'acknowledged', 'resolved'
+    severity TEXT NOT NULL DEFAULT 'critical',     -- 'critical', 'moderate', 'info'
+    latitude DOUBLE PRECISION,
+    longitude DOUBLE PRECISION,
+    location_name TEXT,
+    trigger_type TEXT NOT NULL,                    -- 'button_press', 'qr_scan', 'medical_triage'
+    responder_id UUID REFERENCES profiles(id),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    resolved_at TIMESTAMPTZ
+);
 
-Create a separate Next.js application that connects to the existing Supabase project.
-
-The first goal is not feature parity with the mobile app.
-
-Prioritize web experiences that provide the most value:
-
-- QR-based profile access.
-- Emergency/SOS viewing.
-- Volunteer or responder dashboard.
-- Administrative/monitoring views.
-- Other browser-friendly workflows required by the project.
-
-Keep the web application responsive so the same application can work on phones, tablets, and desktop browsers.
-
----
-
-### Phase 4 — Reuse the Same Backend Operations
-
-For shared functionality, the website should use the same backend data and business rules as the mobile application.
-
-Examples:
-
-- Reading a pilgrim profile.
-- Creating an SOS event.
-- Updating SOS status.
-- Assigning or dispatching help.
-- Updating a user's status.
-- Reading emergency information.
-
-Avoid creating duplicate business logic simply because there are two frontends.
-
-Where practical, share types, validation rules, constants, and API/business contracts between the clients.
-
----
-
-### Phase 5 — Implement Realtime Synchronization
-
-Use Supabase Realtime for data that should appear immediately on another client.
-
-Example:
-
-    Mobile App
-        ↓
-    Creates SOS
-        ↓
-    Supabase
-        ↓
-    Realtime Event
-        ↓
-    Web Dashboard updates
-
-And the reverse:
-
-    Web Dashboard
-        ↓
-    Updates SOS status
-        ↓
-    Supabase
-        ↓
-    Realtime Event
-        ↓
-    Mobile App updates
-
-Prioritize realtime for emergency and operational information rather than trying to make every piece of UI realtime.
-
----
-
-### Phase 6 — Design the QR Flow
-
-QR codes should use HTTPS URLs rather than being tied directly to one client.
-
-Example concept:
-
-    https://<domain>/p/<identifier>
-
-The URL becomes the universal entry point.
-
-Desired behavior:
-
-    Scan QR
-       ↓
-    HTTPS Link
-       ↓
-    Is the application installed?
-       ├── Yes → Open mobile application
-       └── No  → Open Next.js web page
-
-This means the same QR code can support both platforms.
-
-The web route should always remain a valid fallback.
+-- 6. Broadcast Announcements (Leader to Dindi Members)
+CREATE TABLE broadcast_messages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    dindi_group_id UUID NOT NULL REFERENCES dindi_groups(id) ON DELETE CASCADE,
+    sender_id UUID NOT NULL REFERENCES profiles(id),
+    message TEXT NOT NULL,
+    is_urgent BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
 
 ---
 
-### Phase 7 — Add Deep Linking
+## 4. Universal QR Entry & Deep Linking Flow
 
-After the web fallback works, configure native deep linking using the same HTTPS URLs.
+### Universal HTTPS Link Format
+All printed badges, wristbands, and stickers embed universal HTTPS URLs:
+```text
+https://<variraksha-domain>/p/<emergency_card_id>
+```
 
-Use:
+### Routing Decision Flow
+```text
+                  [User Scans QR Code]
+                           │
+                           ▼
+              https://<domain>/p/<id>
+                           │
+             ┌─────────────┴─────────────┐
+             ▼                           ▼
+     [App Installed?]            [App Not Installed]
+             │                           │
+    (iOS Universal Links /               │
+     Android App Links)                  │
+             │                           │
+             ▼                           ▼
+    Opens Mobile App             Opens Next.js Web
+   Navigates to Medical Card    Displays Instant Emergency Card
+   (Authenticated Context)      (Public Read via Supabase RLS)
+```
 
-- Android App Links.
-- iOS Universal Links.
-
-The mobile application should understand the relevant route and identifier contained in the URL.
-
-For example, a QR link that represents a pilgrim/profile should open the equivalent profile inside the mobile application when the app is installed.
-
-Do not depend on custom-only schemes as the primary QR destination if the same flow needs to work on devices without the app.
-
----
-
-### Phase 8 — Keep Native-Only Capabilities in the Mobile App
-
-Do not force every mobile feature into the browser.
-
-Capabilities such as:
-
-- Offline SQLite storage.
-- Bluetooth/BLE mesh communication.
-- Background native processing.
-- Native push notifications.
-- Other device-specific integrations.
-
-should remain in the React Native application.
-
-The website should provide the online/shared version of the workflow where appropriate.
-
-This creates a deliberate difference between the clients instead of trying to make both platforms technically identical.
-
----
-
-### Phase 9 — Security and Access Control
-
-Before deployment, verify:
-
-- Authentication is enforced where necessary.
-- Supabase Row Level Security policies are enabled and tested.
-- Sensitive medical/emergency data is not exposed unnecessarily.
-- Public QR pages only reveal information intended to be public or emergency-accessible.
-- Privileged operations are performed through secure server-side mechanisms where required.
-- Secret keys are never exposed in client-side code.
-- The web and mobile clients use appropriate environment variables and permissions.
-
-Security should be based on backend authorization, not only frontend restrictions.
+1. **Public Emergency Web Card (`/p/[id]`):**
+   - Instant loading with zero app install required.
+   - Shows pilgrim photo, blood group, allergies, critical medications, and emergency contacts.
+   - Includes **"One-Tap Call Leader"** and **"Trigger Responder Alert"** buttons.
+2. **Mobile Universal Linking Configuration:**
+   - Scheme: `variraksha://`
+   - Associated Domains: `applinks:<variraksha-domain>`
+   - Path Prefix: `/p/` -> maps to `MedicalIDScreen` in the mobile navigator.
 
 ---
 
-### Phase 10 — Testing
+## 5. Supabase Realtime Synchronization Architecture
 
-Test the complete cross-platform flow rather than testing each client in isolation.
+```text
+  [ Mobile Pilgrim App ]                     [ Next.js Web Dashboard ]
+           │                                            │
+           │ (1) User holds SOS button (2s)             │
+           ▼                                            │
+  [ Insert into `sos_events` ]                          │
+           │                                            │
+           ▼                                            │
+  [ Supabase Realtime Engine ] ─────────────────────────┼──► (2) Instant Live Alert on Map & Radar
+           │                                            │    (Plays alarm sound & shows location)
+           │                                            │
+           │ (4) Receives acknowledgement update ◄──────┼─── (3) Responder clicks "Acknowledge"
+           ▼                                                 or "Dispatch Ambulance"
+  [ Mobile Status: "Help is on the way!" ]
+```
 
-Minimum integration scenarios:
-
-**QR**
-- Scan with app installed.
-- Scan without app installed.
-- Open QR directly in a browser.
-- Verify the correct profile/record is shown.
-
-**Realtime**
-- Trigger an SOS from mobile and verify web updates.
-- Update an event from web and verify mobile updates.
-- Verify reconnect behavior after temporary network loss.
-
-**Authentication**
-- Login on mobile.
-- Login on web.
-- Verify unauthorized users cannot access protected data.
-
-**Offline**
-- Confirm native offline behavior remains functional.
-- Confirm data synchronizes correctly after reconnecting.
-
-**Responsive Web**
-- Test mobile browser.
-- Test tablet-sized viewport.
-- Test desktop dashboard.
+- **Row Level Security (RLS):**
+  - `profiles` & `medical_profiles`: Public read allowed for specific `emergency_card_id` lookups. Writes restricted to authenticated user.
+  - `sos_events`: Authenticated users can insert; volunteers/leaders/staff can update status. Realtime enabled on `INSERT` and `UPDATE`.
 
 ---
 
-## 5. Development Priority for the Hackathon
+## 6. Offline Storage & Native Capabilities Strategy
 
-Build in this order:
+### 1. SQLite Local Caching (Mobile)
+- When a pilgrim logs in or completes onboarding, their profile, medical details, emergency contacts, and active Dindi route are stored in local SQLite (`variraksha.db`).
+- If network connection drops completely, the Mobile Medical Card and Emergency ID remain 100% functional locally.
 
-1. Understand and preserve the existing mobile implementation.
-2. Verify the existing Supabase backend.
-3. Create the Next.js web client.
-4. Connect the web client to the same Supabase project.
-5. Implement the QR web fallback.
-6. Implement the main responder/volunteer dashboard.
-7. Connect the most important shared actions.
-8. Add realtime synchronization.
-9. Add deep linking.
-10. Deploy and polish the complete demo flow.
-
-Do not spend significant time on advanced architecture before the end-to-end flow works.
-
-A working cross-platform flow is more valuable than a highly abstract codebase.
+### 2. BLE Mesh Communication
+- **Architecture Standard:** UI-simulated mesh relay layer with native haptics/audio and optimistic local queuing for hackathon demonstrations.
+- If connectivity is restored, queued broadcast packets and SOS statuses synchronize automatically with Supabase.
 
 ---
 
-## 6. Deployment Approach
+## 7. Hackathon Implementation Roadmap
 
-Use a simple deployment model:
+```text
+Phase 1: Canonical Database & Supabase Setup
+  ├── Write SQL Migration script in supabase/migrations/
+  ├── Configure RLS policies (public QR read, authenticated writes)
+  └── Seed realistic Pandharpur Wari sample data (Pilgrims, Dindis, Medical Profiles)
 
-- **React Native:** Expo / EAS or the existing mobile distribution workflow.
-- **Next.js:** Vercel or another suitable Next.js host.
-- **Backend:** Existing Supabase project.
-- **QR domain:** Use the production web domain as the universal HTTPS destination.
+Phase 2: Next.js Web Client Scaffold (/web)
+  ├── Setup Next.js 14/15 App Router with Tailwind CSS & Lucide Icons
+  ├── Implement Public QR Emergency Card: /p/[id]
+  ├── Implement Realtime Responder / Dindi Leader Dashboard: /dashboard
+  └── Wire Supabase Realtime listener for instant SOS alert notifications
 
-The production QR links should point to the permanent domain rather than a temporary development or preview URL.
+Phase 3: Mobile App Backend Integration
+  ├── Update app/lib/supabaseClient.ts with environment variables
+  ├── Bind Onboarding & OTP verification to Supabase Auth & Profile Store
+  ├── Connect HomeSOSScreen 2-second hold trigger to `sos_events` table insert
+  ├── Subscribe Mobile app to Realtime alerts & Dindi broadcasts
+  └── Implement offline SQLite caching in app/lib/sqlite.ts
 
----
-
-## 7. Target End-to-End Flow
-
-The finished system should behave conceptually like this:
-
-    User
-      ↓
-    QR Scan
-      ↓
-    HTTPS Universal Link
-      ↓
-    ┌─────────────────────────────┐
-    │ App installed?              │
-    └─────────────────────────────┘
-          ↓                 ↓
-        Yes                 No
-          ↓                 ↓
-    React Native          Next.js
-          ↓                 ↓
-          └───────┬─────────┘
-                  ↓
-               Supabase
-                  ↓
-            PostgreSQL
-                  ↓
-            Realtime Events
-                  ↓
-       Other connected clients
-
-The important property is that both clients remain synchronized through the same backend instead of attempting to synchronize directly with each other.
+Phase 4: Deep Linking & End-to-End Demo Polish
+  ├── Configure app.json scheme & linking in RootNavigator
+  ├── Test QR scan flow on desktop, mobile web, and mobile app
+  └── Validate end-to-end realtime loop (Mobile SOS -> Web Dashboard -> Web Resolution -> Mobile Status Update)
+```
 
 ---
 
-## 8. Architectural Rules to Follow
+## 8. Summary of Architectural Decisions
 
-### Rule 1 — One shared backend
-Do not create separate web and mobile databases.
-
-### Rule 2 — One source of truth
-Shared online state should live in PostgreSQL/Supabase.
-
-### Rule 3 — Reuse existing mobile logic
-Do not rewrite working React Native functionality just to match the website.
-
-### Rule 4 — Web and mobile do not need feature parity
-The website should provide the workflows that make sense in a browser.
-
-### Rule 5 — Native capabilities stay native
-Offline storage and BLE-related functionality should remain in the mobile application.
-
-### Rule 6 — QR links should be platform-independent
-Use HTTPS URLs that can resolve to either the app or website.
-
-### Rule 7 — Backend security is mandatory
-Frontend hiding is not access control.
-
-### Rule 8 — Build the integration first
-Get one complete flow working end-to-end before expanding the feature set.
-
----
-
-## 9. Recommended Technology Choice
-
-**Mobile**
-- React Native
-- Expo
-
-**Web**
-- Next.js
-- TypeScript
-- Tailwind CSS or the project's preferred UI system
-
-**Backend**
-- Supabase
-- PostgreSQL
-- Supabase Auth
-- Supabase Realtime
-- Supabase Storage / Edge Functions as required
-
-**Native / Offline**
-- SQLite
-- BLE / native device APIs
-- GPS
-- Camera / QR
-- Notifications
-
-**Integration**
-- HTTPS QR links
-- Android App Links
-- iOS Universal Links
-
----
-
-## 10. Final Goal
-
-The end result should feel like **one application available through two interfaces**, not two separate applications.
-
-A user should be able to enter through a QR code, use either the native application or website depending on device availability, and still interact with the same underlying data and emergency workflows.
-
-The architecture should remain simple, reliable, and easy for the team to extend after the hackathon.
+1. **Web:** Next.js application inside `/web` directory for optimal dashboard performance, responsive layouts, and universal QR scan landings.
+2. **Mobile:** Preserves existing React Native + Expo codebase, elevating mock states to live Supabase backend operations.
+3. **Backend:** Shared PostgreSQL database on Supabase with single-source-of-truth tables and Realtime WebSocket triggers.
+4. **QR System:** Universal HTTPS URLs with deep link fallbacks.
