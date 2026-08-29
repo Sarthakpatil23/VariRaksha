@@ -27,10 +27,14 @@ import {
   claimEmergencyAlert,
   resolveEmergencyAlert,
   subscribeToEmergencyAlerts,
+  createAlertFromBlePacket,
   EmergencyAlert,
   calculateDynamicPriority,
   prioritizeEmergencyAlerts,
 } from '../../services/alertService';
+import { bleMeshManager } from '../../services/bleMeshManager';
+import { BleMeshStatusBanner } from '../../components/sos/BleMeshStatusBanner';
+import { BleSosPacket, estimateDistanceFromRssi } from '../../services/bleMeshPacket';
 
 export const VolunteerDashboardScreen: React.FC<
   VolunteerTabScreenProps<'VolunteerDashboard'>
@@ -48,6 +52,8 @@ export const VolunteerDashboardScreen: React.FC<
   const [selectedMapPointId, setSelectedMapPointId] = useState<string | null>(null);
   const [activeClaimedRoute, setActiveClaimedRoute] = useState<ClaimedRouteMapData | null>(null);
   const [modalActiveSos, setModalActiveSos] = useState<ActiveSOSMapData | null>(null);
+  const [isBleScanning, setIsBleScanning] = useState<boolean>(false);
+  const [lastBleReceived, setLastBleReceived] = useState<{ name: string; distance: string } | null>(null);
 
   const currentVolunteer = {
     id: volunteerId,
@@ -120,6 +126,82 @@ export const VolunteerDashboardScreen: React.FC<
     return () => {
       unsubscribe();
       clearInterval(pollInterval);
+    };
+  }, []);
+
+  // 3. BLE Mesh Scanning for Offline SOS Beacons
+  useEffect(() => {
+    const startBleScan = async () => {
+      const started = await bleMeshManager.startScanning();
+      if (started) {
+        setIsBleScanning(true);
+        console.log('[VolunteerDashboard] BLE Mesh scanning started');
+      }
+    };
+
+    startBleScan();
+
+    // Listen for incoming BLE SOS beacons
+    const removeBleListener = bleMeshManager.addEventListener(async (event) => {
+      if (event.type === 'sos_received' && event.packet) {
+        const packet = event.packet;
+        const dist = event.estimatedDistance
+          ? `~${Math.round(event.estimatedDistance)}m away`
+          : 'Nearby';
+
+        console.log(`[VolunteerDashboard] 🚨 BLE SOS from ${packet.pilgrimName} (${dist})`);
+
+        // Intense vibration + alert
+        Vibration.vibrate([0, 500, 200, 500, 200, 1000]);
+
+        setLastBleReceived({ name: packet.pilgrimName, distance: dist });
+
+        // Upload to Supabase (gateway bridge)
+        const { alert: uploadedAlert, error } = await createAlertFromBlePacket(packet);
+
+        if (uploadedAlert) {
+          // Add to local alerts list (it will also come via Supabase Realtime)
+          setAlerts((prev) => {
+            const exists = prev.some((a) => a.id === uploadedAlert.id);
+            if (exists) return prev;
+            return prioritizeEmergencyAlerts([uploadedAlert, ...prev]);
+          });
+        }
+
+        Alert.alert(
+          '🚨 OFFLINE SOS VIA BLUETOOTH',
+          `Pilgrim: ${packet.pilgrimName}\n` +
+          `Problem: ${packet.problemType}\n` +
+          `Blood Group: ${packet.bloodGroup}\n` +
+          `Location: ${packet.latitude.toFixed(4)}, ${packet.longitude.toFixed(4)}\n` +
+          `Distance: ${dist}\n\n` +
+          (error
+            ? `⚠️ Cloud upload failed: ${error}`
+            : '✅ Alert uploaded to cloud dashboard.'),
+          [
+            {
+              text: 'Respond Now',
+              onPress: () => {
+                if (uploadedAlert) handleRespond(uploadedAlert);
+              },
+            },
+            { text: 'Dismiss', style: 'cancel' },
+          ],
+        );
+
+        // Clear the "received" indicator after 10 seconds
+        setTimeout(() => setLastBleReceived(null), 10000);
+      }
+
+      if (event.type === 'status_changed') {
+        setIsBleScanning(event.status === 'scanning');
+      }
+    });
+
+    return () => {
+      removeBleListener();
+      bleMeshManager.stopScanning();
+      setIsBleScanning(false);
     };
   }, []);
 
@@ -458,6 +540,18 @@ export const VolunteerDashboardScreen: React.FC<
             </Text>
           </TouchableOpacity>
         </View>
+
+        {/* BLE MESH SCANNING STATUS BANNER */}
+        {isBleScanning && !lastBleReceived && (
+          <BleMeshStatusBanner mode="scanning" />
+        )}
+        {lastBleReceived && (
+          <BleMeshStatusBanner
+            mode="received"
+            pilgrimName={lastBleReceived.name}
+            distance={lastBleReceived.distance}
+          />
+        )}
 
         {/* 🚨 ACTIVE EMERGENCY DISPATCH CARD (ONLY VISIBLE FOR THE VOLUNTEER WHO CLAIMED IT) */}
         {myClaimedAlert && myClaimedMapRoute && (

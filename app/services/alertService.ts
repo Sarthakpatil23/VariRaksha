@@ -9,6 +9,14 @@ import {
   PriorityFactorsBreakdown,
   PrioritizedAlertInput,
 } from './priorityEngine';
+import { bleMeshManager } from './bleMeshManager';
+import {
+  BleSosPacket,
+  generateMessageId,
+  problemTypeToCode,
+  encodeSosPacket,
+} from './bleMeshPacket';
+import { insertOfflineSos } from '../lib/sqlite';
 
 export {
   calculateDynamicPriority,
@@ -247,8 +255,9 @@ export async function createEmergencySOS(
 
     if (error) {
       console.error('[AlertService] Supabase insert failed:', error.message);
+      const msgId = generateMessageId();
       const offlineAlert: EmergencyAlert = {
-        id: `offline-${Date.now()}`,
+        id: `offline-${msgId}`,
         pilgrim_name: pilgrimName,
         pilgrim_phone: pilgrimPhone,
         pilgrim_age: pilgrimAge,
@@ -262,7 +271,7 @@ export async function createEmergencySOS(
         medical_context: medicalContext,
         severity,
         status: 'nearby',
-        distance_away: 'Live SOS',
+        distance_away: 'BLE Mesh SOS',
         location_name: loc.locationName,
         latitude: loc.latitude,
         longitude: loc.longitude,
@@ -276,6 +285,54 @@ export async function createEmergencySOS(
         updated_at: new Date().toISOString(),
       };
       pendingOfflineQueue.push(offlineAlert);
+
+      // ── BLE Mesh Broadcast (Offline SOS) ──
+      // When Supabase is unreachable, broadcast SOS via Bluetooth to nearby volunteers
+      try {
+        const blePacket: BleSosPacket = {
+          msgId,
+          cardId: emergencyCardId,
+          pilgrimName,
+          pilgrimPhone,
+          emergencyType: problemTypeToCode(payload.problemType),
+          problemType: payload.problemType,
+          latitude: loc.latitude,
+          longitude: loc.longitude,
+          ttl: 5, // Max 5 hops through mesh
+          bloodGroup: profile?.bloodGroup || 'Unknown',
+          age: pilgrimAge,
+          severity,
+          medicalContext,
+          dindiName,
+          timestamp: Math.floor(Date.now() / 1000),
+        };
+
+        // Save to local SQLite for persistence
+        const encodedPayload = encodeSosPacket(blePacket);
+        insertOfflineSos(
+          msgId,
+          emergencyCardId,
+          pilgrimName,
+          pilgrimPhone,
+          payload.problemType,
+          loc.latitude,
+          loc.longitude,
+          severity,
+          encodedPayload,
+        ).catch((sqlErr) => console.warn('[AlertService] SQLite save error:', sqlErr));
+
+        // Start BLE broadcast
+        bleMeshManager.startSosBroadcast(blePacket).then((started) => {
+          if (started) {
+            console.log('[AlertService] 📡 BLE Mesh SOS broadcast started for:', msgId);
+          } else {
+            console.warn('[AlertService] BLE Mesh broadcast failed to start');
+          }
+        });
+      } catch (bleErr) {
+        console.warn('[AlertService] BLE Mesh broadcast error:', bleErr);
+      }
+
       return { alert: offlineAlert, isOfflineQueued: true, error: error.message };
     }
 
@@ -687,4 +744,70 @@ export function calculateVolunteerStats(
     resolvedCount,
     activeClaimedAlert,
   };
+}
+
+/**
+ * Create an emergency alert from a BLE mesh packet received by a Volunteer.
+ * This is the gateway bridge function: BLE Mesh → Supabase.
+ * Called when a Volunteer's phone receives an offline SOS via Bluetooth.
+ */
+export async function createAlertFromBlePacket(
+  packet: BleSosPacket,
+): Promise<{ alert: EmergencyAlert | null; error: string | null }> {
+  try {
+    const priorityBreakdown = calculateDynamicPriority({
+      severity: packet.severity,
+      problem_type: packet.problemType,
+      description: `BLE Mesh relay | Blood: ${packet.bloodGroup} | Age: ${packet.age}`,
+      pilgrim_age: packet.age,
+      medical_context: packet.medicalContext,
+      created_at: new Date(packet.timestamp * 1000).toISOString(),
+      status: 'nearby',
+    });
+
+    const insertData: Record<string, any> = {
+      pilgrim_name: packet.pilgrimName,
+      pilgrim_phone: packet.pilgrimPhone,
+      pilgrim_age: packet.age,
+      emergency_card_id: packet.cardId,
+      dindi_name: packet.dindiName,
+      problem_type: packet.problemType,
+      emergency_type: packet.problemType,
+      notes: `[Offline SOS via BLE Mesh] MsgID: ${packet.msgId} | Blood: ${packet.bloodGroup} | TTL: ${packet.ttl}`,
+      medical_context: packet.medicalContext,
+      severity: packet.severity,
+      status: 'nearby' as AlertStatus,
+      distance_away: 'BLE Mesh Relay',
+      location_name: 'Palkhi Route (BLE Mesh GPS)',
+      latitude: packet.latitude,
+      longitude: packet.longitude,
+      priority_level: priorityBreakdown.priorityLevel,
+      priority_score: priorityBreakdown.rawScore,
+      priority_factors: priorityBreakdown,
+      created_at: new Date(packet.timestamp * 1000).toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    console.log('[AlertService] Uploading BLE Mesh SOS to Supabase:', packet.msgId);
+
+    const { data, error } = await supabase
+      .from('emergency_alerts')
+      .insert([insertData])
+      .select()
+      .single();
+
+    if (error) {
+      console.error('[AlertService] BLE→Supabase upload failed:', error.message);
+      return { alert: null, error: error.message };
+    }
+
+    const created = data as EmergencyAlert;
+    created.priorityData = calculateDynamicPriority(created);
+
+    console.log('[AlertService] ✅ BLE Mesh SOS uploaded to Supabase:', data.id);
+    return { alert: created, error: null };
+  } catch (err: any) {
+    console.error('[AlertService] BLE→Supabase unexpected error:', err);
+    return { alert: null, error: err.message || 'Failed to upload BLE SOS' };
+  }
 }

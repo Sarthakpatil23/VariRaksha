@@ -24,6 +24,8 @@ import { useUserProfile } from '../../lib/userStore';
 import { translateUserProfile } from '../../utils/translator';
 
 import { SOSReportModal, SOSReportData } from '../../components/sos/SOSReportModal';
+import { BleMeshStatusBanner } from '../../components/sos/BleMeshStatusBanner';
+import { bleMeshManager } from '../../services/bleMeshManager';
 import {
   createEmergencySOS,
   subscribeToSingleAlert,
@@ -66,6 +68,7 @@ export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
   const [medicalModalVisible, setMedicalModalVisible] = useState<boolean>(false);
   const [mapModalVisible, setMapModalVisible] = useState<boolean>(false);
   const [selectedMapPointId, setSelectedMapPointId] = useState<string | null>(null);
+  const [isBleBroadcasting, setIsBleBroadcasting] = useState<boolean>(false);
 
   // Animated progress for 2-second hold interaction
   const progressAnim = useRef(new Animated.Value(0)).current;
@@ -129,10 +132,25 @@ export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
         setMapModalVisible(true);
 
         if (isOfflineQueued) {
+          // BLE Mesh Broadcast is active — show Bluetooth-specific messaging
+          setIsBleBroadcasting(true);
           Alert.alert(
-            t('sosQueuedTitle', 'SOS Queued (Offline Mode)'),
-            t('sosQueuedDesc', 'No internet connection detected. Your SOS has been queued and will sync automatically.'),
+            t('sosBleMeshTitle', '📡 SOS Broadcasting via Bluetooth'),
+            t('sosBleMeshDesc', 'No internet detected. Your SOS is being broadcast to nearby volunteers via Bluetooth mesh. Keep Bluetooth ON.'),
           );
+
+          // Listen for BLE mesh events (e.g., ACK from volunteer)
+          const removeBleListener = bleMeshManager.addEventListener((event) => {
+            if (event.type === 'ack_received' && event.ack) {
+              setIsBleBroadcasting(false);
+              Vibration.vibrate([0, 200, 100, 200]);
+              Alert.alert(
+                '✅ Help is Coming!',
+                `Volunteer ${event.ack.volunteerName} has received your SOS and is on the way.`,
+              );
+              removeBleListener();
+            }
+          });
         }
       }
     } catch (err: any) {
@@ -275,6 +293,11 @@ export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
             </Text>
           </View>
         </View>
+
+        {/* BLE MESH BROADCASTING STATUS BANNER */}
+        {isBleBroadcasting && (
+          <BleMeshStatusBanner mode="broadcasting" />
+        )}
 
         {/* LIVE SOS ALERT NOTIFICATION BANNER */}
         {activeSosAlert && (

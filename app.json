@@ -32,7 +32,18 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-video"
+      "expo-video",
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": true,
+          "modes": [
+            "peripheral",
+            "central"
+          ],
+          "bluetoothAlwaysPermission": "VariRaksha uses Bluetooth to relay emergency SOS signals to nearby volunteers when internet is unavailable."
+        }
+      ]
     ]
   }
 }
