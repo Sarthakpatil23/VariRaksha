@@ -92,7 +92,7 @@ export const verifyPhoneOTP = async (
 };
 
 /**
- * Query database to find registered Varkari / Dindi Leader by phone number
+ * Query database to find registered Varkari / Dindi Leader / Volunteer / Medical Staff by phone number
  */
 export const fetchRegisteredActorByPhone = async (
   mobileNumber: string,
@@ -106,257 +106,308 @@ export const fetchRegisteredActorByPhone = async (
     return null;
   }
 
-  console.log(`[AuthService] Fetching from database for phone: ${tenDigit} (Role: ${role})...`);
+  console.log(`[AuthService] Fetching from database for phone: ${tenDigit} (Preferred Role: ${role})...`);
 
-  try {
-    // 1. PRIMARY LOOKUP: Query public.vari_varkaris table safely using * with vari join
-    const { data: varkariRows, error: varkariErr } = await supabase
-      .from('vari_varkaris')
-      .select('*, vari:vari_id(*)')
-      .ilike('mobile_number', `%${tenDigit}%`)
-      .limit(1);
-
-    // Helper to fetch emergency contacts for actor
-    const fetchContacts = async (actorId: string, actorType: string) => {
-      try {
-        const { data: contacts } = await supabase
-          .from('vari_actor_emergency_contacts')
-          .select('*')
-          .eq('actor_id', actorId);
-        if (contacts && contacts.length > 0) {
-          return contacts.map((c: any) => ({
-            id: c.id,
-            name: c.name,
-            phoneNumber: c.phone_number,
-            relationship: c.relationship || 'Emergency Contact',
-          }));
-        }
-      } catch (e) {
-        console.warn('[AuthService] Error fetching actor emergency contacts:', e);
+  // Helper to fetch emergency contacts for actor
+  const fetchContacts = async (actorId: string, actorType: string) => {
+    try {
+      const { data: contacts, error } = await supabase
+        .from('vari_actor_emergency_contacts')
+        .select('*')
+        .eq('actor_id', actorId);
+      if (!error && contacts && contacts.length > 0) {
+        return contacts.map((c: any) => ({
+          id: c.id,
+          name: c.name,
+          phoneNumber: c.phone_number,
+          relationship: c.relationship || 'Emergency Contact',
+        }));
       }
-      return [];
-    };
-
-    if (!varkariErr && varkariRows && varkariRows.length > 0) {
-      const row: any = varkariRows[0];
-      const variInfo: any = row.vari;
-
-      const medicalArr =
-        row.medical_conditions && row.medical_conditions !== 'None'
-          ? row.medical_conditions.split(',').map((s: string) => s.trim())
-          : [];
-      const allergiesArr =
-        row.allergies && row.allergies !== 'None'
-          ? row.allergies.split(',').map((s: string) => s.trim())
-          : [];
-
-      const startPt = variInfo?.start_point || 'Dehu';
-      const dindiNum = row.dindi_number || (variInfo ? variInfo.vari_number.replace(/[^0-9]/g, '') : '12');
-
-      const inferredGender =
-        row.gender ||
-        (row.full_name?.toLowerCase().includes('bai') ||
-        row.full_name?.toLowerCase().includes('tai') ||
-        row.full_name?.toLowerCase().includes('sonal')
-          ? 'Female'
-          : 'Male');
-
-      const contacts = await fetchContacts(row.id, 'varkari');
-
-      const result: RegisteredVarkariProfile = {
-        id: row.id,
-        variId: row.vari_id,
-        fullName: row.full_name,
-        mobileNumber: row.mobile_number || `+91 ${tenDigit}`,
-        village: row.village || 'महाराष्ट्र',
-        dindiName: `संत ${startPt} महाराज पालखी दिंडी`,
-        dindiNumber: dindiNum || '12',
-        dindiLeaderName: variInfo?.dindi_leader_name || 'ह.भ.प. सोपानराव महाराज',
-        emergencyCardId: row.emergency_card_id || `VK-${tenDigit.slice(-6)}`,
-        bloodGroup: row.blood_group || 'B+',
-        medicalConditions: medicalArr,
-        allergies: allergiesArr,
-        role: 'varkari',
-        gender: inferredGender,
-        age: row.age || 58,
-        emergencyContacts: contacts.length > 0 ? contacts : undefined,
-      };
-
-      console.log('[AuthService] Successfully extracted from vari_varkaris:', result.fullName);
-      return result;
+    } catch (e) {
+      console.warn('[AuthService] Error fetching actor emergency contacts:', e);
     }
+    return [];
+  };
 
-    // 2. SECONDARY LOOKUP: Query public.vari_dindi_malaks (Dindi Leaders)
-    const { data: leaderRows, error: leaderErr } = await supabase
-      .from('vari_dindi_malaks')
-      .select('*, vari:vari_id(*)')
-      .ilike('mobile_number', `%${tenDigit}%`)
-      .limit(1);
+  const phoneFilter = `mobile_number.ilike.%${tenDigit}%,mobile_number.ilike.%${tenDigit.slice(0, 5)}%${tenDigit.slice(5)}%`;
 
-    if (!leaderErr && leaderRows && leaderRows.length > 0) {
-      const row: any = leaderRows[0];
-      const variInfo: any = row.vari;
+  // Lookups for individual tables
+  const lookupVarkari = async (): Promise<RegisteredVarkariProfile | null> => {
+    try {
+      const { data: varkariRows, error: varkariErr } = await supabase
+        .from('vari_varkaris')
+        .select('*, vari:vari_id(*)')
+        .or(phoneFilter)
+        .limit(1);
 
-      const medicalArr =
-        row.medical_conditions && row.medical_conditions !== 'None'
-          ? [row.medical_conditions]
-          : [];
-      const allergiesArr =
-        row.allergies && row.allergies !== 'None'
-          ? [row.allergies]
-          : [];
+      if (!varkariErr && varkariRows && varkariRows.length > 0) {
+        const row: any = varkariRows[0];
+        const variInfo: any = row.vari;
 
-      const inferredGender =
-        row.gender ||
-        (row.full_name?.toLowerCase().includes('bai') || row.full_name?.toLowerCase().includes('tai')
-          ? 'Female'
-          : 'Male');
+        const medicalArr =
+          row.medical_conditions && row.medical_conditions !== 'None'
+            ? row.medical_conditions.split(',').map((s: string) => s.trim())
+            : [];
+        const allergiesArr =
+          row.allergies && row.allergies !== 'None'
+            ? row.allergies.split(',').map((s: string) => s.trim())
+            : [];
 
-      const contacts = await fetchContacts(row.id, 'dindi_malak');
+        const startPt = variInfo?.start_point || 'Dehu';
+        const dindiNum =
+          row.dindi_number || (variInfo ? variInfo.vari_number.replace(/[^0-9]/g, '') : '12');
 
-      const result: RegisteredVarkariProfile = {
-        id: row.id,
-        variId: row.vari_id,
-        fullName: row.full_name,
-        mobileNumber: row.mobile_number || `+91 ${tenDigit}`,
-        village: row.village || 'महाराष्ट्र',
-        dindiName: row.dindi_name || (variInfo ? `Sant ${variInfo.start_point} Palkhi` : 'Main Palkhi Dindi'),
-        dindiNumber: variInfo ? variInfo.vari_number.replace(/[^0-9]/g, '') : '01',
-        dindiLeaderName: row.full_name,
-        emergencyCardId: `DL-${tenDigit.slice(-4)}`,
-        bloodGroup: row.blood_group || 'B+',
-        medicalConditions: medicalArr,
-        allergies: allergiesArr,
-        role: 'dindiLeader',
-        gender: inferredGender,
-        age: row.age || 58,
-        totalPilgrims: row.total_pilgrims || 150,
-        palkhiRoute: row.palkhi_route || (variInfo ? `${variInfo.start_point} -> Pandharpur` : 'Main Palkhi Marg'),
-        emergencyContacts: contacts.length > 0 ? contacts : undefined,
-      };
+        const inferredGender =
+          row.gender ||
+          (row.full_name?.toLowerCase().includes('bai') ||
+          row.full_name?.toLowerCase().includes('tai') ||
+          row.full_name?.toLowerCase().includes('sonal')
+            ? 'Female'
+            : 'Male');
 
-      console.log('[AuthService] Successfully extracted from vari_dindi_malaks:', result.fullName);
-      return result;
+        const contacts = await fetchContacts(row.id, 'varkari');
+
+        const result: RegisteredVarkariProfile = {
+          id: row.id,
+          variId: row.vari_id,
+          fullName: row.full_name,
+          mobileNumber: row.mobile_number || `+91 ${tenDigit}`,
+          village: row.village || 'महाराष्ट्र',
+          dindiName: `संत ${startPt} महाराज पालखी दिंडी`,
+          dindiNumber: dindiNum || '12',
+          dindiLeaderName: variInfo?.dindi_leader_name || 'ह.भ.प. सोपानराव महाराज',
+          emergencyCardId: row.emergency_card_id || `VK-${tenDigit.slice(-6)}`,
+          bloodGroup: row.blood_group || 'B+',
+          medicalConditions: medicalArr,
+          allergies: allergiesArr,
+          role: 'varkari',
+          gender: inferredGender,
+          age: row.age || 58,
+          emergencyContacts: contacts.length > 0 ? contacts : undefined,
+        };
+
+        console.log('[AuthService] Successfully extracted from vari_varkaris:', result.fullName);
+        return result;
+      }
+    } catch (e) {
+      console.warn('[AuthService] Varkari query error:', e);
     }
-
-    // 3. TERTIARY LOOKUP: Query public.vari_volunteers
-    const { data: volunteerRows } = await supabase
-      .from('vari_volunteers')
-      .select('*, vari:vari_id(*)')
-      .ilike('mobile_number', `%${tenDigit}%`)
-      .limit(1);
-
-    if (volunteerRows && volunteerRows.length > 0) {
-      const row: any = volunteerRows[0];
-      const contacts = await fetchContacts(row.id, 'volunteer');
-
-      return {
-        id: row.id,
-        variId: row.vari_id,
-        fullName: row.full_name,
-        mobileNumber: row.mobile_number || `+91 ${tenDigit}`,
-        village: row.village || 'महाराष्ट्र',
-        dindiName: 'वारी सेवा पथक (Volunteer)',
-        dindiNumber: '01',
-        emergencyCardId: `VL-${tenDigit.slice(-4)}`,
-        bloodGroup: row.blood_group || 'O+',
-        medicalConditions: [],
-        allergies: [],
-        role: 'volunteer',
-        gender: row.gender || 'Male',
-        age: row.age || 26,
-        assignedSector: row.assigned_sector || 'Sector 1 (Alankapuram)',
-        dutyType: row.duty_type || 'Crowd & Queue Safety',
-        emergencyContacts: contacts.length > 0 ? contacts : undefined,
-      };
-    }
-
-    // 4. QUATERNARY LOOKUP: Query public.vari_medical_staff
-    const { data: medicalRows } = await supabase
-      .from('vari_medical_staff')
-      .select('*, vari:vari_id(*)')
-      .ilike('mobile_number', `%${tenDigit}%`)
-      .limit(1);
-
-    if (medicalRows && medicalRows.length > 0) {
-      const row: any = medicalRows[0];
-      const contacts = await fetchContacts(row.id, 'medical_staff');
-
-      return {
-        id: row.id,
-        variId: row.vari_id,
-        fullName: row.full_name,
-        mobileNumber: row.mobile_number || `+91 ${tenDigit}`,
-        village: row.village || 'महाराष्ट्र',
-        dindiName: 'वैद्यकीय पथक (Medical Camp)',
-        dindiNumber: 'MED-01',
-        emergencyCardId: `MD-${tenDigit.slice(-4)}`,
-        bloodGroup: row.blood_group || 'A+',
-        medicalConditions: [],
-        allergies: [],
-        role: 'medicalStaff',
-        gender: row.gender || 'Male',
-        age: row.age || 36,
-        specialization: row.specialization || 'General Emergency & Trauma',
-        medicalCampLocation: row.medical_camp_location || 'Mobile Ambulance Unit 1',
-        emergencyContacts: contacts.length > 0 ? contacts : undefined,
-      };
-    }
-
-    // 5. QUINARY LOOKUP: Query public.profiles + medical_profiles + emergency_contacts
-    const { data: profileRows } = await supabase
-      .from('profiles')
-      .select(`
-        *,
-        medical_profiles (*),
-        emergency_contacts (*)
-      `)
-      .ilike('mobile_number', `%${tenDigit}%`)
-      .limit(1);
-
-    if (profileRows && profileRows.length > 0) {
-      const p: any = profileRows[0];
-      const med = Array.isArray(p.medical_profiles) ? p.medical_profiles[0] : p.medical_profiles;
-      const emContacts = Array.isArray(p.emergency_contacts)
-        ? p.emergency_contacts.map((c: any) => ({
-            id: c.id,
-            name: c.name,
-            phoneNumber: c.phone_number,
-            relationship: c.relationship,
-            isPrimary: c.is_primary,
-          }))
-        : [];
-
-      let userRole: UserRole = 'varkari';
-      if (p.role === 'dindi_leader' || p.role === 'dindiLeader') userRole = 'dindiLeader';
-      else if (p.role === 'volunteer') userRole = 'volunteer';
-      else if (p.role === 'medical_staff' || p.role === 'medicalStaff') userRole = 'medicalStaff';
-      else if (p.role === 'pilgrim' || p.role === 'varkari') userRole = 'varkari';
-
-      return {
-        id: p.id,
-        fullName: p.full_name || 'वारकरी भाविक',
-        mobileNumber: p.mobile_number || `+91 ${tenDigit}`,
-        emergencyCardId: p.emergency_card_id || `VK-${tenDigit.slice(-6)}`,
-        bloodGroup: med?.blood_group || p.blood_group || 'B+',
-        medicalConditions: med?.chronic_conditions || [],
-        allergies: med?.allergies || [],
-        dindiName: 'संत ज्ञानेश्वर माऊली दिंडी क्र. १२',
-        dindiNumber: '12',
-        role: userRole,
-        village: 'महाराष्ट्र',
-        gender: p.gender || 'Male',
-        age: p.age || 55,
-        emergencyContacts: emContacts.length > 0 ? emContacts : undefined,
-      };
-    }
-
-    console.log('[AuthService] No record found for phone:', tenDigit);
     return null;
-  } catch (err) {
-    console.error('[AuthService] fetchRegisteredActorByPhone database error:', err);
+  };
+
+  const lookupLeader = async (): Promise<RegisteredVarkariProfile | null> => {
+    try {
+      const { data: leaderRows, error: leaderErr } = await supabase
+        .from('vari_dindi_malaks')
+        .select('*, vari:vari_id(*)')
+        .or(phoneFilter)
+        .limit(1);
+
+      if (!leaderErr && leaderRows && leaderRows.length > 0) {
+        const row: any = leaderRows[0];
+        const variInfo: any = row.vari;
+
+        const medicalArr =
+          row.medical_conditions && row.medical_conditions !== 'None'
+            ? [row.medical_conditions]
+            : [];
+        const allergiesArr =
+          row.allergies && row.allergies !== 'None' ? [row.allergies] : [];
+
+        const inferredGender =
+          row.gender ||
+          (row.full_name?.toLowerCase().includes('bai') ||
+          row.full_name?.toLowerCase().includes('tai')
+            ? 'Female'
+            : 'Male');
+
+        const contacts = await fetchContacts(row.id, 'dindi_malak');
+
+        const result: RegisteredVarkariProfile = {
+          id: row.id,
+          variId: row.vari_id,
+          fullName: row.full_name,
+          mobileNumber: row.mobile_number || `+91 ${tenDigit}`,
+          village: row.village || 'महाराष्ट्र',
+          dindiName:
+            row.dindi_name ||
+            (variInfo ? `Sant ${variInfo.start_point} Palkhi` : 'Main Palkhi Dindi'),
+          dindiNumber: variInfo ? variInfo.vari_number.replace(/[^0-9]/g, '') : '01',
+          dindiLeaderName: row.full_name,
+          emergencyCardId: `DL-${tenDigit.slice(-4)}`,
+          bloodGroup: row.blood_group || 'B+',
+          medicalConditions: medicalArr,
+          allergies: allergiesArr,
+          role: 'dindiLeader',
+          gender: inferredGender,
+          age: row.age || 58,
+          totalPilgrims: row.total_pilgrims || 150,
+          palkhiRoute:
+            row.palkhi_route ||
+            (variInfo ? `${variInfo.start_point} -> Pandharpur` : 'Main Palkhi Marg'),
+          emergencyContacts: contacts.length > 0 ? contacts : undefined,
+        };
+
+        console.log('[AuthService] Successfully extracted from vari_dindi_malaks:', result.fullName);
+        return result;
+      }
+    } catch (e) {
+      console.warn('[AuthService] Leader query error:', e);
+    }
     return null;
+  };
+
+  const lookupVolunteer = async (): Promise<RegisteredVarkariProfile | null> => {
+    try {
+      const { data: volunteerRows, error: volErr } = await supabase
+        .from('vari_volunteers')
+        .select('*, vari:vari_id(*)')
+        .or(phoneFilter)
+        .limit(1);
+
+      if (!volErr && volunteerRows && volunteerRows.length > 0) {
+        const row: any = volunteerRows[0];
+        const contacts = await fetchContacts(row.id, 'volunteer');
+
+        return {
+          id: row.id,
+          variId: row.vari_id,
+          fullName: row.full_name,
+          mobileNumber: row.mobile_number || `+91 ${tenDigit}`,
+          village: row.village || 'महाराष्ट्र',
+          dindiName: 'वारी सेवा पथक (Volunteer)',
+          dindiNumber: '01',
+          emergencyCardId: `VL-${tenDigit.slice(-4)}`,
+          bloodGroup: row.blood_group || 'O+',
+          medicalConditions: [],
+          allergies: [],
+          role: 'volunteer',
+          gender: row.gender || 'Male',
+          age: row.age || 26,
+          assignedSector: row.assigned_sector || 'Sector 1 (Alankapuram)',
+          dutyType: row.duty_type || 'Crowd & Queue Safety',
+          emergencyContacts: contacts.length > 0 ? contacts : undefined,
+        };
+      }
+    } catch (e) {
+      console.warn('[AuthService] Volunteer query error:', e);
+    }
+    return null;
+  };
+
+  const lookupMedical = async (): Promise<RegisteredVarkariProfile | null> => {
+    try {
+      const { data: medicalRows, error: medErr } = await supabase
+        .from('vari_medical_staff')
+        .select('*, vari:vari_id(*)')
+        .or(phoneFilter)
+        .limit(1);
+
+      if (!medErr && medicalRows && medicalRows.length > 0) {
+        const row: any = medicalRows[0];
+        const contacts = await fetchContacts(row.id, 'medical_staff');
+
+        return {
+          id: row.id,
+          variId: row.vari_id,
+          fullName: row.full_name,
+          mobileNumber: row.mobile_number || `+91 ${tenDigit}`,
+          village: row.village || 'महाराष्ट्र',
+          dindiName: 'वैद्यकीय पथक (Medical Camp)',
+          dindiNumber: 'MED-01',
+          emergencyCardId: `MD-${tenDigit.slice(-4)}`,
+          bloodGroup: row.blood_group || 'A+',
+          medicalConditions: [],
+          allergies: [],
+          role: 'medicalStaff',
+          gender: row.gender || 'Male',
+          age: row.age || 36,
+          specialization: row.specialization || 'General Emergency & Trauma',
+          medicalCampLocation: row.medical_camp_location || 'Mobile Ambulance Unit 1',
+          emergencyContacts: contacts.length > 0 ? contacts : undefined,
+        };
+      }
+    } catch (e) {
+      console.warn('[AuthService] Medical staff query error:', e);
+    }
+    return null;
+  };
+
+  const lookupLegacyProfile = async (): Promise<RegisteredVarkariProfile | null> => {
+    try {
+      const { data: profileRows, error: profErr } = await supabase
+        .from('profiles')
+        .select(`
+          *,
+          medical_profiles (*),
+          emergency_contacts (*)
+        `)
+        .or(phoneFilter)
+        .limit(1);
+
+      if (!profErr && profileRows && profileRows.length > 0) {
+        const p: any = profileRows[0];
+        const med = Array.isArray(p.medical_profiles) ? p.medical_profiles[0] : p.medical_profiles;
+        const emContacts = Array.isArray(p.emergency_contacts)
+          ? p.emergency_contacts.map((c: any) => ({
+              id: c.id,
+              name: c.name,
+              phoneNumber: c.phone_number,
+              relationship: c.relationship,
+              isPrimary: c.is_primary,
+            }))
+          : [];
+
+        let userRole: UserRole = 'varkari';
+        if (p.role === 'dindi_leader' || p.role === 'dindiLeader') userRole = 'dindiLeader';
+        else if (p.role === 'volunteer') userRole = 'volunteer';
+        else if (p.role === 'medical_staff' || p.role === 'medicalStaff') userRole = 'medicalStaff';
+        else if (p.role === 'pilgrim' || p.role === 'varkari') userRole = 'varkari';
+
+        return {
+          id: p.id,
+          fullName: p.full_name || 'वारकरी भाविक',
+          mobileNumber: p.mobile_number || `+91 ${tenDigit}`,
+          emergencyCardId: p.emergency_card_id || `VK-${tenDigit.slice(-6)}`,
+          bloodGroup: med?.blood_group || p.blood_group || 'B+',
+          medicalConditions: med?.chronic_conditions || [],
+          allergies: med?.allergies || [],
+          dindiName: 'संत ज्ञानेश्वर माऊली दिंडी क्र. १२',
+          dindiNumber: '12',
+          role: userRole,
+          village: 'महाराष्ट्र',
+          gender: p.gender || 'Male',
+          age: p.age || 55,
+          emergencyContacts: emContacts.length > 0 ? emContacts : undefined,
+        };
+      }
+    } catch (e) {
+      console.warn('[AuthService] Legacy profile query error:', e);
+    }
+    return null;
+  };
+
+  // Determine lookup order based on selected role
+  const lookups: Array<() => Promise<RegisteredVarkariProfile | null>> = [];
+  if (role === 'dindiLeader') {
+    lookups.push(lookupLeader, lookupVarkari, lookupVolunteer, lookupMedical, lookupLegacyProfile);
+  } else if (role === 'volunteer') {
+    lookups.push(lookupVolunteer, lookupVarkari, lookupLeader, lookupMedical, lookupLegacyProfile);
+  } else if (role === 'medicalStaff') {
+    lookups.push(lookupMedical, lookupVarkari, lookupLeader, lookupVolunteer, lookupLegacyProfile);
+  } else {
+    lookups.push(lookupVarkari, lookupLeader, lookupVolunteer, lookupMedical, lookupLegacyProfile);
   }
+
+  for (const lookupFn of lookups) {
+    const profile = await lookupFn();
+    if (profile) {
+      return profile;
+    }
+  }
+
+  console.log('[AuthService] No record found for phone:', tenDigit);
+  return null;
 };
 
 /**
