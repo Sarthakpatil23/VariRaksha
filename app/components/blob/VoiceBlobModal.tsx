@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,11 +10,20 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
+import { Audio } from 'expo-av';
 import { Ionicons, Feather } from '@expo/vector-icons';
-import { colors, spacing, typography } from '../../constants';
-import { AIBlob } from './AIBlob';
+import { colors, typography } from '../../constants';
+import { ThinkingOrb } from './ThinkingOrb';
 import { sendUserChatMessage, ChatPersona } from '../../lib/chatStore';
+import {
+  transcribeWithSarvam,
+  askSarvamAI,
+  convertTextToSpeech,
+  playSarvamAudio,
+  stopAudioPlayback,
+} from '../../services/sarvamService';
 
 interface VoiceBlobModalProps {
   visible: boolean;
@@ -25,10 +34,12 @@ interface VoiceBlobModalProps {
 }
 
 /**
- * Clean, minimalist Voice Mode UI matching the reference layout
- * but styled in VariRaksha's signature Saffron, Maroon, and Cream theme.
- * Tapping the cross button immediately closes voice mode and switches to normal chat mode
- * while maintaining conversation continuity via chatStore.
+ * Sarvam AI Voice Assistant Modal
+ * Features:
+ * - Sarvam STT (saarika:v2) for accurate Marathi voice recognition
+ * - Sarvam LLM (sarvam-2b) for contextual pilgrim safety guidance
+ * - Sarvam TTS (bulbul:v2) for natural Marathi speech response
+ * - Dynamic State-Reactive ThinkingOrb (Vitthal Blue -> Saffron Gold -> Tulsi Green)
  */
 export const VoiceBlobModal: React.FC<VoiceBlobModalProps> = ({
   visible,
@@ -42,35 +53,153 @@ export const VoiceBlobModal: React.FC<VoiceBlobModalProps> = ({
     'idle' | 'listening' | 'processing' | 'speaking'
   >('listening');
   const [inputText, setInputText] = useState<string>('');
+  const [liveTranscript, setLiveTranscript] = useState<string>('');
+  const [aiResponseText, setAiResponseText] = useState<string>('');
+  const [isRecording, setIsRecording] = useState<boolean>(false);
 
+  const recordingRef = useRef<Audio.Recording | null>(null);
+
+  // Initialize and start voice listening when modal opens
   useEffect(() => {
-    if (!visible) return;
+    if (!visible) {
+      stopCurrentSession();
+      return;
+    }
 
-    setVoiceState('listening');
-    Vibration.vibrate(30);
-
-    const timer1 = setTimeout(() => {
-      setVoiceState('processing');
-    }, 4000);
-
-    const timer2 = setTimeout(() => {
-      setVoiceState('speaking');
-    }, 6000);
+    setLiveTranscript('');
+    setAiResponseText('राम कृष्ण हरी! बोलणे सुरू करा, मी ऐकत आहे...');
+    startVoiceRecording();
 
     return () => {
-      clearTimeout(timer1);
-      clearTimeout(timer2);
+      stopCurrentSession();
     };
   }, [visible]);
 
-  const handleToggleMute = () => {
-    Vibration.vibrate(30);
-    setIsMuted(!isMuted);
-    setVoiceState(!isMuted ? 'idle' : 'listening');
+  const stopCurrentSession = async () => {
+    try {
+      await stopAudioPlayback();
+      if (recordingRef.current) {
+        await recordingRef.current.stopAndUnloadAsync();
+        recordingRef.current = null;
+      }
+      setIsRecording(false);
+    } catch (e) {
+      // Ignore cleanup error
+    }
   };
 
-  const handleCloseAndSwitchToChat = () => {
+  // 1. Start Microphone Recording
+  const startVoiceRecording = async () => {
+    try {
+      await stopAudioPlayback();
+
+      const { status } = await Audio.requestPermissionsAsync();
+      if (status !== 'granted') {
+        setAiResponseText('मायक्रोफोन परवानगी आवश्यक आहे.');
+        return;
+      }
+
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+      });
+
+      const recording = new Audio.Recording();
+      await recording.prepareToRecordAsync(
+        Audio.RecordingOptionsPresets.HIGH_QUALITY
+      );
+      await recording.startAsync();
+
+      recordingRef.current = recording;
+      setIsRecording(true);
+      setVoiceState('listening');
+      Vibration.vibrate(25);
+    } catch (err) {
+      console.error('Failed to start recording:', err);
+      setVoiceState('listening');
+    }
+  };
+
+  // 2. Stop Recording & Trigger Sarvam STT -> LLM -> TTS
+  const stopAndProcessVoice = async () => {
+    if (!recordingRef.current) return;
+
+    try {
+      Vibration.vibrate(30);
+      setVoiceState('processing');
+      setAiResponseText('आपला आवाज ऐकला... विचार करत आहे...');
+
+      const recording = recordingRef.current;
+      await recording.stopAndUnloadAsync();
+      const uri = recording.getURI();
+      recordingRef.current = null;
+      setIsRecording(false);
+
+      if (!uri) {
+        setVoiceState('listening');
+        return;
+      }
+
+      // Step A: Sarvam STT (saarika:v2)
+      let transcript = '';
+      try {
+        transcript = await transcribeWithSarvam(uri, 'mr-IN');
+      } catch (sttErr) {
+        console.warn('STT API failed, checking manual input');
+      }
+
+      if (!transcript) {
+        setAiResponseText('आवाज स्पष्ट आला नाही. कृपया पुन्हा बोला किंवा टाईप करा.');
+        setVoiceState('idle');
+        return;
+      }
+
+      setLiveTranscript(transcript);
+      if (onTranscriptComplete) {
+        onTranscriptComplete(transcript);
+      }
+
+      // Step B: Sarvam LLM (sarvam-2b)
+      const aiReply = await askSarvamAI(transcript, mode);
+      setAiResponseText(aiReply);
+
+      // Save to global chatStore
+      sendUserChatMessage(mode, transcript);
+
+      // Step C: Sarvam TTS (bulbul:v2) & Audio Playback
+      setVoiceState('speaking');
+      try {
+        const base64Audio = await convertTextToSpeech(aiReply, 'mr-IN', 'ananya');
+        await playSarvamAudio(base64Audio, aiReply, () => {
+          setVoiceState('idle');
+        });
+      } catch (ttsErr) {
+        // Fallback to native speech
+        await playSarvamAudio('', aiReply, () => {
+          setVoiceState('idle');
+        });
+      }
+    } catch (err) {
+      console.error('Voice processing pipeline error:', err);
+      setAiResponseText('माफ करा, संपर्क साधता आला नाही. कृपया पुन्हा प्रयत्न करा.');
+      setVoiceState('idle');
+    }
+  };
+
+  const handleToggleMute = async () => {
+    Vibration.vibrate(30);
+    if (isRecording) {
+      setIsMuted(true);
+      await stopAndProcessVoice();
+    } else {
+      setIsMuted(false);
+      await startVoiceRecording();
+    }
+  };
+
+  const handleCloseAndSwitchToChat = async () => {
     Vibration.vibrate(25);
+    await stopCurrentSession();
     if (onSwitchToChat) {
       onSwitchToChat();
     } else {
@@ -78,16 +207,29 @@ export const VoiceBlobModal: React.FC<VoiceBlobModalProps> = ({
     }
   };
 
-  const handleSendText = () => {
+  const handleSendText = async () => {
     const text = inputText.trim();
     if (!text) return;
 
-    sendUserChatMessage(mode, text);
-    if (onTranscriptComplete) {
-      onTranscriptComplete(text);
-    }
     setInputText('');
-    handleCloseAndSwitchToChat();
+    setLiveTranscript(text);
+    setVoiceState('processing');
+    setAiResponseText('उत्तर तयार करत आहे...');
+
+    try {
+      const aiReply = await askSarvamAI(text, mode);
+      setAiResponseText(aiReply);
+      sendUserChatMessage(mode, text);
+
+      setVoiceState('speaking');
+      const base64Audio = await convertTextToSpeech(aiReply, 'mr-IN', 'ananya');
+      await playSarvamAudio(base64Audio, aiReply, () => {
+        setVoiceState('idle');
+      });
+    } catch (err) {
+      sendUserChatMessage(mode, text);
+      handleCloseAndSwitchToChat();
+    }
   };
 
   if (!visible) return null;
@@ -107,9 +249,17 @@ export const VoiceBlobModal: React.FC<VoiceBlobModalProps> = ({
           {/* Top Bar */}
           <View style={styles.topBar}>
             <View style={styles.titleWrapper}>
-              <Text style={styles.topTitle}>व्हॉईस मोड (Voice Mode)</Text>
+              <Text style={styles.topTitle}>सर्वम AI व्हॉईस सहाय्यक (Sarvam AI)</Text>
               <Text style={styles.topSubtitle}>
-                {isMuted ? 'Microphone Muted' : 'Speaking / Listening Active'}
+                {isMuted
+                  ? 'मायक्रोफोन बंद आहे'
+                  : voiceState === 'listening'
+                  ? '🎧 ऐकत आहे (Listening)...'
+                  : voiceState === 'processing'
+                  ? '⚡ विचार करत आहे (Thinking)...'
+                  : voiceState === 'speaking'
+                  ? '🗣️ बोलत आहे (Speaking)...'
+                  : 'विश्रांती (Idle)'}
               </Text>
             </View>
 
@@ -123,12 +273,28 @@ export const VoiceBlobModal: React.FC<VoiceBlobModalProps> = ({
             </TouchableOpacity>
           </View>
 
-          {/* Center Area with Simplified Calm Voice Orb */}
+          {/* Center Area with Dynamic State-Reactive Thinking Orb (240px) */}
           <View style={styles.centerOrbContainer}>
-            <AIBlob
-              size={220}
+            <ThinkingOrb
               state={isMuted ? 'idle' : voiceState}
+              size={240}
             />
+
+            {/* Live Subtitle / Response Display */}
+            <View style={styles.dialogCard}>
+              {liveTranscript ? (
+                <View style={styles.userBubble}>
+                  <Text style={styles.userBubbleText}>"{liveTranscript}"</Text>
+                </View>
+              ) : null}
+
+              <Text style={styles.aiDialogText}>
+                {voiceState === 'processing' ? (
+                  <ActivityIndicator size="small" color={colors.saffronDark} />
+                ) : null}{' '}
+                {aiResponseText}
+              </Text>
+            </View>
           </View>
 
           {/* Bottom Bar */}
@@ -136,13 +302,12 @@ export const VoiceBlobModal: React.FC<VoiceBlobModalProps> = ({
             {/* Input Pill Container */}
             <TouchableOpacity
               activeOpacity={0.9}
-              onPress={handleCloseAndSwitchToChat}
               style={styles.inputPill}
             >
               <Feather name="edit-3" size={16} color={colors.saffronDark} style={styles.plusIcon} />
               <TextInput
                 style={styles.pillTextInput}
-                placeholder="Type or speak (विचारणा करा)..."
+                placeholder="प्रश्न टाईप करा किंवा बोला..."
                 placeholderTextColor={colors.textSecondary}
                 value={inputText}
                 onChangeText={setInputText}
@@ -151,26 +316,30 @@ export const VoiceBlobModal: React.FC<VoiceBlobModalProps> = ({
               />
             </TouchableOpacity>
 
-            {/* Circular Maroon Mic Mute Button */}
+            {/* Mic Button: Tap to Toggle Record / Process */}
             <TouchableOpacity
               activeOpacity={0.8}
               onPress={handleToggleMute}
-              style={[styles.circleButton, isMuted && styles.circleButtonMuted]}
-              accessibilityLabel="Mute microphone"
+              style={[
+                styles.circleButton,
+                isRecording && styles.circleButtonRecording,
+                isMuted && styles.circleButtonMuted,
+              ]}
+              accessibilityLabel="Toggle microphone"
             >
               <Ionicons
-                name={isMuted ? 'mic-off' : 'mic'}
-                size={22}
+                name={isRecording ? 'stop' : isMuted ? 'mic-off' : 'mic'}
+                size={24}
                 color="#FFFFFF"
               />
             </TouchableOpacity>
 
-            {/* Circular Saffron Cross Button: Closes voice and switches to chat mode */}
+            {/* Close / Switch to Chat Button */}
             <TouchableOpacity
               activeOpacity={0.85}
               onPress={handleCloseAndSwitchToChat}
               style={styles.closeButton}
-              accessibilityLabel="Close voice mode and open chat"
+              accessibilityLabel="Close voice mode"
             >
               <Ionicons name="close" size={24} color="#FFFFFF" />
             </TouchableOpacity>
@@ -213,6 +382,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.textSecondary,
     marginTop: 2,
+    fontWeight: '600',
   },
   circleIconButton: {
     width: 44,
@@ -226,6 +396,42 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  dialogCard: {
+    marginTop: 20,
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    maxWidth: '92%',
+    alignItems: 'center',
+    shadowColor: colors.maroon,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
+    borderWidth: 1,
+    borderColor: '#F3E5AB',
+  },
+  userBubble: {
+    alignSelf: 'center',
+    backgroundColor: 'rgba(56, 189, 248, 0.12)',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginBottom: 8,
+  },
+  userBubbleText: {
+    fontSize: 13,
+    color: '#0369A1',
+    fontWeight: '600',
+  },
+  aiDialogText: {
+    fontSize: 15,
+    color: colors.text,
+    textAlign: 'center',
+    lineHeight: 22,
+    fontWeight: '500',
   },
   bottomBar: {
     flexDirection: 'row',
@@ -273,8 +479,11 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   },
+  circleButtonRecording: {
+    backgroundColor: '#DC2626',
+  },
   circleButtonMuted: {
-    backgroundColor: '#8E2800',
+    backgroundColor: '#64748B',
   },
   closeButton: {
     width: 52,

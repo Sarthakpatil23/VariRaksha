@@ -1,29 +1,38 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   TextInput,
-  Vibration,
   KeyboardAvoidingView,
   Platform,
+  Vibration,
   SafeAreaView,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons, Feather } from '@expo/vector-icons';
+import { Audio } from 'expo-av';
 import { colors, spacing, typography } from '../../constants';
 import {
   MessageScrollerProvider,
   MessageScrollerViewport,
   MessageScrollerItem,
 } from './MessageScroller';
-import { AIBlob } from '../blob/AIBlob';
+import { ThinkingOrb } from '../blob/ThinkingOrb';
 import {
   useChatMessages,
   sendUserChatMessage,
   clearChatMessages,
   ChatPersona,
 } from '../../lib/chatStore';
+import {
+  transcribeWithSarvam,
+  askSarvamAI,
+  convertTextToSpeech,
+  playSarvamAudio,
+  stopAudioPlayback,
+} from '../../services/sarvamService';
 
 interface VariRakshaChatbotProps {
   mode: ChatPersona;
@@ -33,9 +42,12 @@ interface VariRakshaChatbotProps {
 }
 
 /**
- * Unified Chat & Voice Experience.
- * Provides seamless in-place switching between text chat and calm voice mode
- * while maintaining 100% conversation session and state continuity.
+ * Unified Chat & Voice Experience with Sarvam AI Integration.
+ * Features:
+ * - Real-time Sarvam AI (sarvam-2b) Marathi Pilgrim Chatbot
+ * - Speech-to-Text via Sarvam STT (saarika:v2)
+ * - Text-to-Speech via Sarvam TTS (bulbul:v2)
+ * - Dynamic State-Reactive ThinkingOrb (Vitthal Blue -> Saffron Gold -> Tulsi Green)
  */
 export const VariRakshaChatbot: React.FC<VariRakshaChatbotProps> = ({
   mode,
@@ -52,36 +64,148 @@ export const VariRakshaChatbot: React.FC<VariRakshaChatbotProps> = ({
   const [voiceState, setVoiceState] = useState<
     'idle' | 'listening' | 'processing' | 'speaking'
   >('listening');
+  const [voiceTranscript, setVoiceTranscript] = useState<string>('');
+  const [voiceAiReply, setVoiceAiReply] = useState<string>('');
+  const [isRecording, setIsRecording] = useState<boolean>(false);
+  const [isSendingChat, setIsSendingChat] = useState<boolean>(false);
 
+  const recordingRef = useRef<Audio.Recording | null>(null);
+
+  // Manage voice mode recording session
   useEffect(() => {
     if (viewMode === 'voice') {
-      setVoiceState('listening');
-      Vibration.vibrate(30);
-
-      const timer1 = setTimeout(() => {
-        setVoiceState('processing');
-      }, 4000);
-
-      const timer2 = setTimeout(() => {
-        setVoiceState('speaking');
-      }, 6000);
-
-      return () => {
-        clearTimeout(timer1);
-        clearTimeout(timer2);
-      };
+      setVoiceTranscript('');
+      setVoiceAiReply('राम कृष्ण हरी! बोलणे सुरू करा, मी ऐकत आहे...');
+      startVoiceRecording();
+    } else {
+      stopCurrentVoiceSession();
     }
+
+    return () => {
+      stopCurrentVoiceSession();
+    };
   }, [viewMode]);
 
-  const handleSendMessage = (textToSend?: string) => {
-    const text = (textToSend || inputText).trim();
-    if (!text) return;
+  const stopCurrentVoiceSession = async () => {
+    try {
+      await stopAudioPlayback();
+      if (recordingRef.current) {
+        await recordingRef.current.stopAndUnloadAsync();
+        recordingRef.current = null;
+      }
+      setIsRecording(false);
+    } catch (e) {
+      // Ignore cleanup error
+    }
+  };
 
-    sendUserChatMessage(mode, text);
+  const startVoiceRecording = async () => {
+    try {
+      await stopAudioPlayback();
+
+      const { status } = await Audio.requestPermissionsAsync();
+      if (status !== 'granted') {
+        setVoiceAiReply('मायक्रोफोन परवानगी आवश्यक आहे.');
+        return;
+      }
+
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+      });
+
+      const recording = new Audio.Recording();
+      await recording.prepareToRecordAsync(
+        Audio.RecordingOptionsPresets.HIGH_QUALITY
+      );
+      await recording.startAsync();
+
+      recordingRef.current = recording;
+      setIsRecording(true);
+      setIsMuted(false);
+      setVoiceState('listening');
+      Vibration.vibrate(25);
+    } catch (err) {
+      console.error('Voice record start error:', err);
+      setVoiceState('listening');
+    }
+  };
+
+  const stopAndProcessVoice = async () => {
+    if (!recordingRef.current) return;
+
+    try {
+      Vibration.vibrate(30);
+      setVoiceState('processing');
+      setVoiceAiReply('आपला आवाज ऐकला... विचार करत आहे...');
+
+      const recording = recordingRef.current;
+      await recording.stopAndUnloadAsync();
+      const uri = recording.getURI();
+      recordingRef.current = null;
+      setIsRecording(false);
+
+      if (!uri) {
+        setVoiceState('listening');
+        return;
+      }
+
+      // Step 1: STT
+      let transcript = '';
+      try {
+        transcript = await transcribeWithSarvam(uri, 'mr-IN');
+      } catch (sttErr) {
+        console.warn('STT failed:', sttErr);
+      }
+
+      if (!transcript) {
+        setVoiceAiReply('आवाज स्पष्ट आला नाही. कृपया पुन्हा बोला किंवा टाईप करा.');
+        setVoiceState('idle');
+        return;
+      }
+
+      setVoiceTranscript(transcript);
+
+      // Step 2: LLM
+      const reply = await askSarvamAI(transcript, mode);
+      setVoiceAiReply(reply);
+
+      // Save to chat store
+      sendUserChatMessage(mode, transcript);
+
+      // Step 3: TTS
+      setVoiceState('speaking');
+      try {
+        const base64Audio = await convertTextToSpeech(reply, 'mr-IN', 'ananya');
+        await playSarvamAudio(base64Audio, reply, () => {
+          setVoiceState('idle');
+        });
+      } catch (ttsErr) {
+        await playSarvamAudio('', reply, () => {
+          setVoiceState('idle');
+        });
+      }
+    } catch (err) {
+      console.error('Voice processing error:', err);
+      setVoiceAiReply('माफ करा, संपर्क साधता आला नाही. कृपया पुन्हा प्रयत्न करा.');
+      setVoiceState('idle');
+    }
+  };
+
+  const handleSendMessage = async (textToSend?: string) => {
+    const text = (textToSend || inputText).trim();
+    if (!text || isSendingChat) return;
+
     setInputText('');
+    setIsSendingChat(true);
+
+    try {
+      await sendUserChatMessage(mode, text);
+    } finally {
+      setIsSendingChat(false);
+    }
 
     if (viewMode === 'voice') {
-      // Return naturally to chat to see the conversation flow
       setViewMode('chat');
     }
   };
@@ -92,14 +216,21 @@ export const VariRakshaChatbot: React.FC<VariRakshaChatbotProps> = ({
     setInputText('');
   };
 
-  const handleToggleMute = () => {
+  const handleToggleMute = async () => {
     Vibration.vibrate(25);
-    setIsMuted(!isMuted);
-    setVoiceState(!isMuted ? 'idle' : 'listening');
+    if (isRecording) {
+      setIsMuted(true);
+      await stopAndProcessVoice();
+    } else {
+      setIsMuted(false);
+      await startVoiceRecording();
+    }
   };
 
   const isVarkari = mode === 'varkari';
-  const title = isVarkari ? 'वारीरक्षक सहाय्यक (AI Sahayak)' : 'दिंडी कमान सहाय्यक (Commander AI)';
+  const title = isVarkari
+    ? 'सर्वम AI वारी सहाय्यक (Sarvam AI)'
+    : 'सर्वम AI दिंडी कमांडर (Sarvam AI)';
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -110,76 +241,125 @@ export const VariRakshaChatbot: React.FC<VariRakshaChatbotProps> = ({
         {/* ===================== VIEW MODE 1: TEXT CHAT ===================== */}
         {viewMode === 'chat' ? (
           <>
-            {/* Header */}
-            <View style={styles.header}>
-              <View style={styles.headerLeft}>
-                {onClose && (
-                  <TouchableOpacity
-                    activeOpacity={0.7}
-                    onPress={onClose}
-                    style={styles.backButton}
-                    accessibilityLabel="Back"
-                  >
-                    <Ionicons name="arrow-back" size={20} color={colors.maroon} />
-                  </TouchableOpacity>
-                )}
-                <View>
-                  <Text style={styles.headerTitle}>{title}</Text>
-                  <View style={styles.statusRow}>
-                    <View style={styles.statusDot} />
-                    <Text style={styles.statusText}>Offline AI Active</Text>
-                  </View>
-                </View>
+            {/* Top Bar with New Chat & Voice Mode Switch */}
+            <View style={styles.topBar}>
+              <View style={styles.topTitleGroup}>
+                <Text style={styles.headerTitle}>{title}</Text>
+                <Text style={styles.headerSubtitle}>
+                  {isVarkari
+                    ? 'मार्ग, पाणी, अन्नछत्र व वैद्यकीय मदत'
+                    : 'दिंडी व्यवस्थापन व घोषणा'}
+                </Text>
               </View>
 
-              <TouchableOpacity
-                activeOpacity={0.7}
-                onPress={handleNewChat}
-                style={styles.circleIconButton}
-                accessibilityLabel="New Chat"
-              >
-                <Ionicons name="refresh-sharp" size={18} color={colors.maroon} />
-              </TouchableOpacity>
-            </View>
-
-            {/* Chat Body */}
-            <View style={styles.chatBody}>
-              <MessageScrollerProvider>
-                <MessageScrollerViewport style={styles.scrollerViewport}>
-                  {messages.map((msg) => (
-                    <MessageScrollerItem
-                      key={msg.id}
-                      message={msg}
-                      onActionPress={onActionPress}
-                    />
-                  ))}
-                </MessageScrollerViewport>
-              </MessageScrollerProvider>
-            </View>
-
-            {/* Composer Footer */}
-            <View style={styles.composerWrapper}>
-              <View style={styles.composerPill}>
-                {/* Voice Mode Toggle (Mic) */}
+              <View style={styles.topActions}>
+                {/* Reset / New Chat */}
                 <TouchableOpacity
                   activeOpacity={0.7}
+                  onPress={handleNewChat}
+                  style={styles.circleIconButton}
+                  accessibilityLabel="New Chat"
+                >
+                  <Ionicons name="refresh" size={18} color={colors.maroon} />
+                </TouchableOpacity>
+
+                {/* Switch to Voice Blob Mode */}
+                <TouchableOpacity
+                  activeOpacity={0.8}
                   onPress={() => {
                     Vibration.vibrate(30);
                     setViewMode('voice');
                   }}
-                  style={styles.micButton}
+                  style={styles.voiceModeTriggerButton}
                   accessibilityLabel="Switch to Voice Mode"
                 >
-                  <Ionicons name="mic-sharp" size={20} color={colors.saffronDark} />
+                  <Ionicons name="mic" size={18} color="#FFFFFF" />
+                  <Text style={styles.voiceModeTriggerText}>व्हॉईस</Text>
                 </TouchableOpacity>
 
-                {/* Text Input */}
+                {/* Close Button if provided */}
+                {onClose && (
+                  <TouchableOpacity
+                    activeOpacity={0.7}
+                    onPress={onClose}
+                    style={styles.circleIconButton}
+                    accessibilityLabel="Close"
+                  >
+                    <Ionicons name="close" size={20} color={colors.maroon} />
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
+            {/* Conversation Messages Viewport */}
+            <MessageScrollerProvider>
+              <MessageScrollerViewport>
+                {messages.map((item) => (
+                  <MessageScrollerItem
+                    key={item.id}
+                    message={item}
+                    onActionPress={onActionPress}
+                  />
+                ))}
+              </MessageScrollerViewport>
+            </MessageScrollerProvider>
+
+            {/* Chat Input Bar */}
+            <View style={styles.inputBar}>
+              {/* Quick Preset Questions Pill */}
+              <View style={styles.presetsRow}>
+                {isVarkari ? (
+                  <>
+                    <TouchableOpacity
+                      activeOpacity={0.7}
+                      onPress={() => handleSendMessage('पाण्याचे थांबे कुठे आहेत?')}
+                      style={styles.presetChip}
+                    >
+                      <Text style={styles.presetChipText}>💧 पाणी कुठे आहे?</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      activeOpacity={0.7}
+                      onPress={() => handleSendMessage('फलटण अंतर किती आहे?')}
+                      style={styles.presetChip}
+                    >
+                      <Text style={styles.presetChipText}>📍 पुढील मुक्काम</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      activeOpacity={0.7}
+                      onPress={() => handleSendMessage('वैद्यकीय मदत हवी आहे')}
+                      style={styles.presetChip}
+                    >
+                      <Text style={styles.presetChipText}>🚑 डॉक्टर / SOS</Text>
+                    </TouchableOpacity>
+                  </>
+                ) : (
+                  <>
+                    <TouchableOpacity
+                      activeOpacity={0.7}
+                      onPress={() => handleSendMessage('अन्नछत्र जेवणाची घोषणा तयार करा')}
+                      style={styles.presetChip}
+                    >
+                      <Text style={styles.presetChipText}>📢 जेवण घोषणा</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      activeOpacity={0.7}
+                      onPress={() => handleSendMessage('हरवलेल्या वारकऱ्यांचा शोध')}
+                      style={styles.presetChip}
+                    >
+                      <Text style={styles.presetChipText}>📍 हरवलेले वारकरी</Text>
+                    </TouchableOpacity>
+                  </>
+                )}
+              </View>
+
+              {/* Text Input Row */}
+              <View style={styles.inputRow}>
                 <TextInput
-                  style={styles.pillInput}
+                  style={styles.textInput}
                   placeholder={
                     isVarkari
-                      ? 'Ask VariRaksha (विचारा)...'
-                      : 'Ask Commander AI (आदेश द्या)...'
+                      ? 'प्रश्न विचारा (Type your query)...'
+                      : 'कमांड किंवा संदेश लिहा...'
                   }
                   placeholderTextColor={colors.textSecondary}
                   value={inputText}
@@ -188,41 +368,46 @@ export const VariRakshaChatbot: React.FC<VariRakshaChatbotProps> = ({
                   returnKeyType="send"
                 />
 
-                {/* Send Button */}
                 <TouchableOpacity
-                  activeOpacity={0.85}
+                  activeOpacity={0.8}
                   onPress={() => handleSendMessage()}
                   style={[
-                    styles.sendCircle,
-                    inputText.trim().length === 0 && styles.sendCircleDisabled,
+                    styles.sendButton,
+                    (!inputText.trim() || isSendingChat) && styles.sendButtonDisabled,
                   ]}
-                  disabled={inputText.trim().length === 0}
+                  disabled={!inputText.trim() || isSendingChat}
                   accessibilityLabel="Send message"
                 >
-                  <Feather name="arrow-up" size={18} color="#FFFFFF" />
+                  {isSendingChat ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Feather name="arrow-up" size={18} color="#FFFFFF" />
+                  )}
                 </TouchableOpacity>
               </View>
             </View>
           </>
         ) : (
-          /* ===================== VIEW MODE 2: UNIFIED CALM VOICE MODE ===================== */
+          /* ===================== VIEW MODE 2: DYNAMIC VOICE MODE ===================== */
           <View style={styles.voiceContainer}>
             {/* Top Bar with Mode indicator and Close/Switch to Chat button */}
             <View style={styles.voiceTopBar}>
               <View style={styles.voiceTitleGroup}>
-                <Text style={styles.voiceTitle}>व्हॉईस मोड (Voice Mode)</Text>
+                <Text style={styles.voiceTitle}>सर्वम AI व्हॉईस मोड</Text>
                 <Text style={styles.voiceSubtitle}>
                   {isMuted
-                    ? 'Microphone Muted'
+                    ? 'मायक्रोफोन बंद आहे'
+                    : voiceState === 'listening'
+                    ? '🎧 ऐकत आहे (Listening)...'
                     : voiceState === 'processing'
-                    ? 'Processing your request...'
+                    ? '⚡ विचार करत आहे (Thinking)...'
                     : voiceState === 'speaking'
-                    ? 'Responding...'
-                    : 'Listening to your voice...'}
+                    ? '🗣️ बोलत आहे (Speaking)...'
+                    : 'विश्रांती (Idle)'}
                 </Text>
               </View>
 
-              {/* Cross button: Exits voice mode and returns directly to the same chat conversation */}
+              {/* Cross button: Exits voice mode and returns directly to the chat conversation */}
               <TouchableOpacity
                 activeOpacity={0.85}
                 onPress={() => {
@@ -236,12 +421,28 @@ export const VariRakshaChatbot: React.FC<VariRakshaChatbotProps> = ({
               </TouchableOpacity>
             </View>
 
-            {/* Center: Simplified Calm Voice Orb */}
+            {/* Center: Dynamic State-Reactive Thinking Orb (240px) */}
             <View style={styles.voiceCenter}>
-              <AIBlob
-                size={210}
+              <ThinkingOrb
                 state={isMuted ? 'idle' : voiceState}
+                size={240}
               />
+
+              {/* Live Subtitle Dialog Card */}
+              <View style={styles.voiceDialogCard}>
+                {voiceTranscript ? (
+                  <View style={styles.userBubble}>
+                    <Text style={styles.userBubbleText}>"{voiceTranscript}"</Text>
+                  </View>
+                ) : null}
+
+                <Text style={styles.aiDialogText}>
+                  {voiceState === 'processing' ? (
+                    <ActivityIndicator size="small" color={colors.saffronDark} />
+                  ) : null}{' '}
+                  {voiceAiReply}
+                </Text>
+              </View>
             </View>
 
             {/* Bottom Bar: Quick input pill, Mute toggle, and Close to Chat */}
@@ -259,7 +460,7 @@ export const VariRakshaChatbot: React.FC<VariRakshaChatbotProps> = ({
                 />
                 <TextInput
                   style={styles.voicePillTextInput}
-                  placeholder="Or type your message..."
+                  placeholder="किंवा प्रश्न टाईप करा..."
                   placeholderTextColor={colors.textSecondary}
                   value={inputText}
                   onChangeText={setInputText}
@@ -268,18 +469,19 @@ export const VariRakshaChatbot: React.FC<VariRakshaChatbotProps> = ({
                 />
               </TouchableOpacity>
 
-              {/* Mute Button */}
+              {/* Mute / Record Toggle Button */}
               <TouchableOpacity
                 activeOpacity={0.8}
                 onPress={handleToggleMute}
                 style={[
                   styles.voiceCircleButton,
+                  isRecording && styles.voiceCircleButtonRecording,
                   isMuted && styles.voiceCircleButtonMuted,
                 ]}
-                accessibilityLabel="Toggle mute"
+                accessibilityLabel="Toggle microphone"
               >
                 <Ionicons
-                  name={isMuted ? 'mic-off' : 'mic'}
+                  name={isRecording ? 'stop' : isMuted ? 'mic-off' : 'mic'}
                   size={22}
                   color="#FFFFFF"
                 />
@@ -310,138 +512,130 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
-    justifyContent: 'space-between',
   },
-  header: {
+  topBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
     backgroundColor: colors.surface,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  backButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(93, 0, 30, 0.08)',
-    justifyContent: 'center',
-    alignItems: 'center',
+  topTitleGroup: {
+    flex: 1,
   },
   headerTitle: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: typography.fontWeight.bold,
     color: colors.maroon,
   },
-  statusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 2,
-  },
-  statusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#2E7D32',
-    marginRight: 5,
-  },
-  statusText: {
+  headerSubtitle: {
     fontSize: 11,
     color: colors.textSecondary,
-    fontWeight: typography.fontWeight.medium,
+    marginTop: 1,
   },
-  circleIconButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: 'rgba(93, 0, 30, 0.08)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  chatBody: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  scrollerViewport: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  composerWrapper: {
-    paddingHorizontal: spacing.md,
-    paddingBottom: spacing.md,
-    paddingTop: spacing.xs,
-    backgroundColor: colors.background,
-  },
-  composerPill: {
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: colors.surface,
-    borderWidth: 1.5,
-    borderColor: '#EBD8B8',
+  topActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingLeft: 8,
-    paddingRight: 8,
-    shadowColor: colors.maroon,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-    elevation: 3,
+    gap: 8,
   },
-  micButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: 'rgba(230, 81, 0, 0.12)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 6,
-  },
-  pillInput: {
-    flex: 1,
-    fontSize: 15,
-    color: colors.text,
-    paddingVertical: 0,
-    fontWeight: '500',
-  },
-  sendCircle: {
+  circleIconButton: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: colors.saffronDark,
+    backgroundColor: 'rgba(93, 0, 30, 0.06)',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  voiceModeTriggerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.saffronDark,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 18,
+    gap: 4,
     shadowColor: colors.saffronDark,
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
+    shadowOpacity: 0.25,
     shadowRadius: 4,
     elevation: 2,
   },
-  sendCircleDisabled: {
-    backgroundColor: '#D1C4B2',
-    opacity: 0.6,
+  voiceModeTriggerText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
   },
-
-  // VOICE MODE SPECIFIC STYLES
+  inputBar: {
+    backgroundColor: colors.surface,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: 12,
+  },
+  presetsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 8,
+    flexWrap: 'wrap',
+  },
+  presetChip: {
+    backgroundColor: colors.cream,
+    borderWidth: 1,
+    borderColor: '#EBD8B8',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  presetChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.maroon,
+  },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  textInput: {
+    flex: 1,
+    height: 44,
+    backgroundColor: colors.background,
+    borderRadius: 22,
+    paddingHorizontal: 16,
+    fontSize: 14,
+    color: colors.text,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  sendButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.maroon,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  sendButtonDisabled: {
+    backgroundColor: '#C5BAC0',
+  },
+  // Voice View Styles
   voiceContainer: {
     flex: 1,
     justifyContent: 'space-between',
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.md,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 16,
+    backgroundColor: colors.background,
   },
   voiceTopBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: spacing.xs,
+    paddingVertical: 8,
   },
   voiceTitleGroup: {
     flex: 1,
@@ -455,45 +649,76 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.textSecondary,
     marginTop: 2,
+    fontWeight: '600',
   },
   voiceCenter: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
+  voiceDialogCard: {
+    marginTop: 20,
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    maxWidth: '92%',
+    alignItems: 'center',
+    shadowColor: colors.maroon,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
+    borderWidth: 1,
+    borderColor: '#F3E5AB',
+  },
+  userBubble: {
+    alignSelf: 'center',
+    backgroundColor: 'rgba(56, 189, 248, 0.12)',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginBottom: 8,
+  },
+  userBubbleText: {
+    fontSize: 13,
+    color: '#0369A1',
+    fontWeight: '600',
+  },
+  aiDialogText: {
+    fontSize: 15,
+    color: colors.text,
+    textAlign: 'center',
+    lineHeight: 22,
+    fontWeight: '500',
+  },
   voiceBottomBar: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    paddingBottom: spacing.xs,
+    paddingBottom: 8,
   },
   voiceInputPill: {
     flex: 1,
-    height: 52,
-    borderRadius: 26,
+    height: 50,
+    borderRadius: 25,
     backgroundColor: colors.surface,
     borderWidth: 1.5,
     borderColor: '#EBD8B8',
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    shadowColor: colors.maroon,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-    elevation: 2,
   },
   voicePillTextInput: {
     flex: 1,
     fontSize: 14,
     color: colors.text,
     paddingVertical: 0,
-    fontWeight: '500',
   },
   voiceCircleButton: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
     backgroundColor: colors.maroon,
     justifyContent: 'center',
     alignItems: 'center',
@@ -503,13 +728,16 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   },
+  voiceCircleButtonRecording: {
+    backgroundColor: '#DC2626',
+  },
   voiceCircleButtonMuted: {
-    backgroundColor: '#8E2800',
+    backgroundColor: '#64748B',
   },
   voiceCloseButton: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
     backgroundColor: colors.saffronDark,
     justifyContent: 'center',
     alignItems: 'center',

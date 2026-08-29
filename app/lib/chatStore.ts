@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Vibration } from 'react-native';
 import { ChatMessage } from '../components/chat/MessageScroller';
+import { askSarvamAI } from '../services/sarvamService';
 
 export type ChatPersona = 'varkari' | 'dindiLeader';
 
@@ -9,7 +10,7 @@ const VARKARI_STARTER_MESSAGES: ChatMessage[] = [
     id: 'v-init-1',
     role: 'assistant',
     content:
-      'जय हरी विठ्ठल! 🙏 I am your VariRaksha Pilgrim Assistant. Ask me about water stations, route distance to Phaltan, or tap the mic for voice assistance.',
+      'राम कृष्ण हरी! 🙏 मी आपला वारीरक्षक AI सहाय्यक आहे. पाणी, अन्नछत्र, पालखी मार्ग किंवा वैद्यकीय मदतीबाबत विचारा.',
   },
 ];
 
@@ -18,7 +19,7 @@ const LEADER_STARTER_MESSAGES: ChatMessage[] = [
     id: 'l-init-1',
     role: 'assistant',
     content:
-      'जय हरी महाराज! 🚩 I am your Dindi Commander Assistant. I can help draft announcements, track missing pilgrims, or guide emergency camp protocols.',
+      'जय हरी महाराज! 🚩 मी आपला दिंडी कमांडर AI आहे. हरवलेले वारकरी, अन्नछत्र समन्वय आणि दिंडी घोषणा तयार करण्यात मी मदत करू शकतो.',
   },
 ];
 
@@ -56,7 +57,7 @@ export const addChatMessage = (persona: ChatPersona, message: ChatMessage) => {
   notifyListeners();
 };
 
-// Offline AI Rule Engine
+// Offline Rule Engine Fallback
 export const generateAIResponse = (
   input: string,
   persona: ChatPersona,
@@ -68,7 +69,7 @@ export const generateAIResponse = (
       return {
         role: 'assistant',
         content:
-          '💧 Water & Seva Mandap is stationed 2.4 km ahead at Phaltan Annachhatra. Cold filtered water and ORS packets are being distributed free by Shri Vitthal Seva Mandal.',
+          '💧 पुढील २.४ किमी अंतरावर फलटण अन्नछत्र येथे शुद्ध थंड पाणी व ओआरएस पाकिटांचे मोफत वाटप सुरू आहे.',
       };
     }
 
@@ -76,7 +77,7 @@ export const generateAIResponse = (
       return {
         role: 'assistant',
         content:
-          '📞 Dindi Leader: ह.भ.प. सोपानराव महाराज (+91 98765 43210). Tap below to connect immediately:',
+          '📞 दिंडी प्रमुख: ह.भ.प. सोपानराव महाराज (+91 98765 43210). त्वरित संपर्क करण्यासाठी खाली दाबा:',
         actionType: 'call_leader',
         actionLabel: 'Call Dindi Leader Now',
       };
@@ -86,7 +87,7 @@ export const generateAIResponse = (
       return {
         role: 'assistant',
         content:
-          '🚩 Dindi 12 main flag is currently walking at pace (Phaltan Highway, km 42). If you are separated, remain calm and look for the yellow VariRaksha relay marshals.',
+          '🚩 दिंडी क्रमांक १२ चा मुख्य ध्वज सध्या पालखी मार्गावर व्यवस्थित चालत आहे. आपण मागे पडल्यास पिवळ्या वारीरक्षक सेवकांशी संपर्क साधा.',
         actionType: 'call_leader',
         actionLabel: 'Alert Leader of My Position',
       };
@@ -96,7 +97,7 @@ export const generateAIResponse = (
       return {
         role: 'assistant',
         content:
-          '☀️ First-Aid Advice: The temperature is 34°C. Please rest under shaded trees immediately, hydrate with small sips of water, and loosen footwear if blisters appear.',
+          '☀️ प्रथमोपचार सल्ला: तापमान ३४°C आहे. झाडांच्या सावलीत विश्रांती घ्या, थोडे-थोडे पाणी प्या आणि पायात फोड असल्यास पादत्राणे सैल करा.',
         actionType: 'medical_sos',
         actionLabel: 'Request Route First-Aid Kit',
       };
@@ -106,17 +107,14 @@ export const generateAIResponse = (
       return {
         role: 'assistant',
         content:
-          '📍 Route Status: You are on Wakhari ➔ Phaltan segment. 12 km remaining (Approx. 3 hours walking time). Next major rest halt is Phaltan Ashram at 1:00 PM.',
+          '📍 मार्ग स्थिती: आपण वाखरी ➔ फलटण टप्प्यावर आहात. अंदाजे १२ किमी अंतर बाकी आहे. पुढील मुख्य विसावा फलटण आश्रम येथे दुपारी १ वाजता आहे.',
       };
     }
 
-    // Default Varkari Response
     return {
       role: 'assistant',
       content:
-        'जय हरी! I have noted your message: "' +
-        input +
-        '". For urgent safety, you can call Dindi Leader Sopanrao Maharaj or trigger SOS.',
+        'राम कृष्ण हरी 🙏 मी आपल्या सेवेसाठी तत्पर आहे. पालखी मार्ग, पाणी किंवा आपत्कालीन मदतीसाठी विचारा.',
       actionType: 'call_leader',
       actionLabel: 'Call Dindi Leader',
     };
@@ -126,7 +124,7 @@ export const generateAIResponse = (
       return {
         role: 'assistant',
         content:
-          '📢 Suggested Broadcast Draft:\n"सर्व वारकरी बंधू-भगिनींनी लक्ष द्या: पुढील ५०० मीटर अंतरावर फलटण अन्नछत्र मंडप आहे. सर्व दिंडीने दुपारी १ वाजता भोजनासाठी एकत्र यावे."',
+          '📢 प्रस्तावित दिंडी घोषणा:\n"सर्व वारकरी बंधू-भगिनींनी लक्ष द्या: पुढील ५०० मीटर अंतरावर फलटण अन्नछत्र मंडप आहे. सर्व दिंडीने दुपारी १ वाजता भोजनासाठी एकत्र यावे."',
         actionType: 'broadcast',
         actionLabel: 'Open Broadcast Composer',
       };
@@ -136,7 +134,7 @@ export const generateAIResponse = (
       return {
         role: 'assistant',
         content:
-          '📍 Lost Member Protocol: 2 pilgrims currently alert (Pandurang Patil: 420m NW, Shantabai Shinde: 150m Behind). Relay #4 and #2 are pinging their devices.',
+          '📍 हरवलेले वारकरी प्रोटोकॉल: २ वारकरी सतर्क (पांडुरंग पाटील: ४२० मी वायव्य, शांताबाई शिंदे: १५० मी मागे). रिले #४ आणि #२ त्यांना संपर्क करत आहेत.',
         actionType: 'call_leader',
         actionLabel: 'Call Pandurang Patil',
       };
@@ -146,36 +144,27 @@ export const generateAIResponse = (
       return {
         role: 'assistant',
         content:
-          '🚑 Medical Coordination: Mobile Clinic #2 (Dr. Deshmukh) is stationed 1.8 km ahead at Phaltan camp with oxygen, saline, and ambulance support.',
+          '🚑 वैद्यकीय समन्वय: फिरते क्लिनिक #२ (डॉ. देशमुख) फलटण कॅम्पजवळ १.८ किमी अंतरावर ऑक्सिजन व सलाईनसह सज्ज आहे.',
         actionType: 'medical_sos',
         actionLabel: 'Emergency Mobile Clinic Dispatch',
       };
     }
 
-    if (query.includes('heat') || query.includes('weather') || query.includes('हवामान') || query.includes('ऊन') || query.includes('विश्रांती')) {
-      return {
-        role: 'assistant',
-        content:
-          '☀️ Weather Alert: 34°C peak between 12:30 PM - 2:30 PM. Recommended Leader Action: Announce a mandatory 30-minute shade halt before 1:00 PM.',
-        actionType: 'broadcast',
-        actionLabel: 'Broadcast Heat Warning Alert',
-      };
-    }
-
-    // Default Leader Response
     return {
       role: 'assistant',
       content:
-        'महाराज, your command: "' +
-        input +
-        '" has been processed. Would you like to transmit a group broadcast or coordinate with volunteers?',
+        'जय हरी महाराज 🚩 आपला आदेश नोंदवला आहे. दिंडीतील वारकऱ्यांसाठी घोषणा किंवा समन्वय साधायचा आहे का?',
       actionType: 'broadcast',
       actionLabel: 'Open Dindi Broadcast',
     };
   }
 };
 
-export const sendUserChatMessage = (persona: ChatPersona, text: string) => {
+export const sendUserChatMessage = async (
+  persona: ChatPersona,
+  text: string,
+  onAiResponse?: (response: string) => void
+) => {
   const cleanText = text.trim();
   if (!cleanText) return;
 
@@ -189,16 +178,32 @@ export const sendUserChatMessage = (persona: ChatPersona, text: string) => {
 
   addChatMessage(persona, userMsg);
 
-  // Generate simulated instant assistant reply
-  setTimeout(() => {
-    const aiResponse = generateAIResponse(cleanText, persona);
+  try {
+    const history = chatState[persona].map((m) => ({
+      role: (m.role === 'user' ? 'user' : m.role === 'assistant' ? 'assistant' : 'system') as 'user' | 'assistant' | 'system',
+      content: m.content,
+    }));
+
+    const aiContent = await askSarvamAI(cleanText, persona, history);
     const aiMsg: ChatMessage = {
       id: `ai-${Date.now()}`,
-      ...aiResponse,
+      role: 'assistant',
+      content: aiContent,
     };
     addChatMessage(persona, aiMsg);
     Vibration.vibrate(35);
-  }, 400);
+    if (onAiResponse) onAiResponse(aiContent);
+  } catch (error) {
+    console.warn('[Sarvam Chat fallback]:', error);
+    const offlineResponse = generateAIResponse(cleanText, persona);
+    const aiMsg: ChatMessage = {
+      id: `ai-${Date.now()}`,
+      ...offlineResponse,
+    };
+    addChatMessage(persona, aiMsg);
+    Vibration.vibrate(35);
+    if (onAiResponse) onAiResponse(aiMsg.content);
+  }
 };
 
 export const useChatMessages = (persona: ChatPersona): ChatMessage[] => {
