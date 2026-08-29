@@ -166,10 +166,10 @@ export const VoiceBlobModal: React.FC<VoiceBlobModalProps> = ({
       // Save to global chatStore
       sendUserChatMessage(mode, transcript);
 
-      // Step C: Sarvam TTS (bulbul:v2) & Audio Playback
+      // Step C: Sarvam TTS (bulbul:v3) & Audio Playback
       setVoiceState('speaking');
       try {
-        const base64Audio = await convertTextToSpeech(aiReply, 'mr-IN', 'ananya');
+        const base64Audio = await convertTextToSpeech(aiReply, 'mr-IN', 'pooja');
         await playSarvamAudio(base64Audio, aiReply, () => {
           setVoiceState('idle');
         });
@@ -222,7 +222,7 @@ export const VoiceBlobModal: React.FC<VoiceBlobModalProps> = ({
       sendUserChatMessage(mode, text);
 
       setVoiceState('speaking');
-      const base64Audio = await convertTextToSpeech(aiReply, 'mr-IN', 'ananya');
+      const base64Audio = await convertTextToSpeech(aiReply, 'mr-IN', 'pooja');
       await playSarvamAudio(base64Audio, aiReply, () => {
         setVoiceState('idle');
       });
@@ -249,7 +249,7 @@ export const VoiceBlobModal: React.FC<VoiceBlobModalProps> = ({
           {/* Top Bar */}
           <View style={styles.topBar}>
             <View style={styles.titleWrapper}>
-              <Text style={styles.topTitle}>सर्वम AI व्हॉईस सहाय्यक (Sarvam AI)</Text>
+              <Text style={styles.topTitle}>वारीरक्षक AI व्हॉईस सहाय्यक</Text>
               <Text style={styles.topSubtitle}>
                 {isMuted
                   ? 'मायक्रोफोन बंद आहे'

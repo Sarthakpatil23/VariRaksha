@@ -176,15 +176,16 @@ export const sendUserChatMessage = async (
     content: cleanText,
   };
 
+  // Capture prior conversation history before appending new user message
+  const priorHistory = chatState[persona].map((m) => ({
+    role: (m.role === 'user' ? 'user' : m.role === 'assistant' ? 'assistant' : 'system') as 'user' | 'assistant' | 'system',
+    content: m.content,
+  }));
+
   addChatMessage(persona, userMsg);
 
   try {
-    const history = chatState[persona].map((m) => ({
-      role: (m.role === 'user' ? 'user' : m.role === 'assistant' ? 'assistant' : 'system') as 'user' | 'assistant' | 'system',
-      content: m.content,
-    }));
-
-    const aiContent = await askSarvamAI(cleanText, persona, history);
+    const aiContent = await askSarvamAI(cleanText, persona, priorHistory);
     const aiMsg: ChatMessage = {
       id: `ai-${Date.now()}`,
       role: 'assistant',
@@ -194,7 +195,7 @@ export const sendUserChatMessage = async (
     Vibration.vibrate(35);
     if (onAiResponse) onAiResponse(aiContent);
   } catch (error) {
-    console.warn('[Sarvam Chat fallback]:', error);
+    console.warn('[Sarvam Chat fallback triggered]:', error);
     const offlineResponse = generateAIResponse(cleanText, persona);
     const aiMsg: ChatMessage = {
       id: `ai-${Date.now()}`,

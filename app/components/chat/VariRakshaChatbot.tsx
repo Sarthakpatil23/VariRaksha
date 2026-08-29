@@ -176,7 +176,7 @@ export const VariRakshaChatbot: React.FC<VariRakshaChatbotProps> = ({
       // Step 3: TTS
       setVoiceState('speaking');
       try {
-        const base64Audio = await convertTextToSpeech(reply, 'mr-IN', 'ananya');
+        const base64Audio = await convertTextToSpeech(reply, 'mr-IN', 'pooja');
         await playSarvamAudio(base64Audio, reply, () => {
           setVoiceState('idle');
         });
@@ -229,8 +229,8 @@ export const VariRakshaChatbot: React.FC<VariRakshaChatbotProps> = ({
 
   const isVarkari = mode === 'varkari';
   const title = isVarkari
-    ? 'सर्वम AI वारी सहाय्यक (Sarvam AI)'
-    : 'सर्वम AI दिंडी कमांडर (Sarvam AI)';
+    ? 'वारीरक्षक AI सहाय्यक'
+    : 'वारीरक्षक दिंडी कमांडर AI';
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -301,6 +301,14 @@ export const VariRakshaChatbot: React.FC<VariRakshaChatbotProps> = ({
                     onActionPress={onActionPress}
                   />
                 ))}
+                {isSendingChat && (
+                  <View style={styles.thinkingWrapper}>
+                    <View style={styles.thinkingBubble}>
+                      <ActivityIndicator size="small" color={colors.saffronDark} />
+                      <Text style={styles.thinkingText}>विचार करत आहे (Thinking)...</Text>
+                    </View>
+                  </View>
+                )}
               </MessageScrollerViewport>
             </MessageScrollerProvider>
 
@@ -393,7 +401,7 @@ export const VariRakshaChatbot: React.FC<VariRakshaChatbotProps> = ({
             {/* Top Bar with Mode indicator and Close/Switch to Chat button */}
             <View style={styles.voiceTopBar}>
               <View style={styles.voiceTitleGroup}>
-                <Text style={styles.voiceTitle}>सर्वम AI व्हॉईस मोड</Text>
+                <Text style={styles.voiceTitle}>वारीरक्षक व्हॉईस मोड</Text>
                 <Text style={styles.voiceSubtitle}>
                   {isMuted
                     ? 'मायक्रोफोन बंद आहे'
@@ -746,6 +754,33 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 4,
     elevation: 3,
+  },
+  thinkingWrapper: {
+    flexDirection: 'row',
+    justifyContent: 'flex-start',
+    marginVertical: 6,
+  },
+  thinkingBubble: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: '#EBD8B8',
+    borderRadius: 18,
+    borderBottomLeftRadius: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    shadowColor: colors.maroon,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  thinkingText: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    fontWeight: '500',
   },
 });
 
