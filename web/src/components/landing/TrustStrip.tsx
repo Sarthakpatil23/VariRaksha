@@ -1,37 +1,22 @@
 import React from 'react';
-import { WifiOff, Zap, FileText, QrCode, Users, HeartPulse } from 'lucide-react';
+
+const stats = [
+  { label: 'Pilgrims on route annually', value: '3M+' },
+  { label: 'Emergency response stages', value: '6' },
+  { label: 'Route kilometers covered', value: '250+' },
+];
 
 export const TrustStrip: React.FC = () => {
-  const capabilities = [
-    { label: 'OFFLINE-FIRST MESH', icon: WifiOff },
-    { label: 'REALTIME DISPATCH', icon: Zap },
-    { label: 'INSTANT MEDICAL ID', icon: FileText },
-    { label: 'UNIVERSAL QR ACCESS', icon: QrCode },
-    { label: 'DINDI RADAR SAFETY', icon: Users },
-    { label: 'ROLE-BASED RESPONSE', icon: HeartPulse },
-  ];
-
   return (
-    <section className="border-y border-surface-border bg-parchment-light/80 py-5">
+    <section className="border-y border-surface-border bg-parchment-light">
       <div className="max-w-7xl mx-auto px-6 sm:px-8 lg:px-12">
-        <div className="flex flex-wrap items-center justify-between gap-y-4 gap-x-6 text-ink-soft">
-          {capabilities.map((cap, idx) => {
-            const Icon = cap.icon;
-            return (
-              <div
-                key={cap.label}
-                className="flex items-center gap-2.5 text-[11px] sm:text-xs font-bold tracking-widest uppercase"
-              >
-                <Icon className="w-3.5 h-3.5 text-saffron" />
-                <span>{cap.label}</span>
-                {idx < capabilities.length - 1 && (
-                  <span className="hidden lg:inline-block ml-6 text-surface-border font-light">
-                    /
-                  </span>
-                )}
-              </div>
-            );
-          })}
+        <div className="flex flex-col sm:flex-row divide-y sm:divide-y-0 sm:divide-x divide-surface-border">
+          {stats.map((s) => (
+            <div key={s.label} className="flex items-center justify-between py-5 sm:py-6 sm:flex-1 sm:px-10 first:sm:pl-0 last:sm:pr-0">
+              <span className="text-sm text-muted">{s.label}</span>
+              <span className="text-2xl font-bold text-ink-deep tracking-tight">{s.value}</span>
+            </div>
+          ))}
         </div>
       </div>
     </section>

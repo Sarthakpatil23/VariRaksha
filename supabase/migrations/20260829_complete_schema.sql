@@ -153,7 +153,7 @@ CREATE TRIGGER on_auth_user_created
     FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
 -- ==============================================================================
--- Row Level Security (RLS) Policies
+-- Row Level Security (RLS) Policies (Idempotent)
 -- ==============================================================================
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.medical_profiles ENABLE ROW LEVEL SECURITY;
@@ -163,42 +163,39 @@ ALTER TABLE public.sos_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.broadcast_messages ENABLE ROW LEVEL SECURITY;
 
 -- 1. Profiles Policies
-CREATE POLICY "Public read for emergency cards" ON public.profiles
-    FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Public read for emergency cards" ON public.profiles;
+CREATE POLICY "Public read for emergency cards" ON public.profiles FOR SELECT USING (true);
 
-CREATE POLICY "Users can update their own profile" ON public.profiles
-    FOR UPDATE USING (auth.uid() = id);
+DROP POLICY IF EXISTS "Users can update their own profile" ON public.profiles;
+CREATE POLICY "Users can update their own profile" ON public.profiles FOR UPDATE USING (auth.uid() = id);
 
 -- 2. Medical Profiles Policies
-CREATE POLICY "Public read for medical emergency cards" ON public.medical_profiles
-    FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Public read for medical emergency cards" ON public.medical_profiles;
+CREATE POLICY "Public read for medical emergency cards" ON public.medical_profiles FOR SELECT USING (true);
 
-CREATE POLICY "Users can manage their own medical profile" ON public.medical_profiles
-    FOR ALL USING (auth.uid() = profile_id);
+DROP POLICY IF EXISTS "Users can manage their own medical profile" ON public.medical_profiles;
+CREATE POLICY "Users can manage their own medical profile" ON public.medical_profiles FOR ALL USING (auth.uid() = profile_id);
 
 -- 3. SOS Events Policies
-CREATE POLICY "Anyone authenticated can insert SOS" ON public.sos_events
-    FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+DROP POLICY IF EXISTS "Anyone authenticated can insert SOS" ON public.sos_events;
+CREATE POLICY "Anyone authenticated can insert SOS" ON public.sos_events FOR INSERT WITH CHECK (auth.role() = 'authenticated');
 
-CREATE POLICY "Anyone can view active SOS events" ON public.sos_events
-    FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Anyone can view active SOS events" ON public.sos_events;
+CREATE POLICY "Anyone can view active SOS events" ON public.sos_events FOR SELECT USING (true);
 
-CREATE POLICY "Responders and creators can update SOS" ON public.sos_events
-    FOR UPDATE USING (true);
+DROP POLICY IF EXISTS "Responders and creators can update SOS" ON public.sos_events;
+CREATE POLICY "Responders and creators can update SOS" ON public.sos_events FOR UPDATE USING (true);
 
 -- 4. Dindi Groups Policies
-CREATE POLICY "Public view dindi groups" ON public.dindi_groups
-    FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Public view dindi groups" ON public.dindi_groups;
+CREATE POLICY "Public view dindi groups" ON public.dindi_groups FOR SELECT USING (true);
 
 -- 5. Broadcast Messages Policies
-CREATE POLICY "Public view broadcast messages" ON public.broadcast_messages
-    FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Public view broadcast messages" ON public.broadcast_messages;
+CREATE POLICY "Public view broadcast messages" ON public.broadcast_messages FOR SELECT USING (true);
 
-CREATE POLICY "Leaders can send broadcasts" ON public.broadcast_messages
-    FOR INSERT WITH CHECK (auth.role() = 'authenticated');
-
--- Enable Realtime publication for SOS Events
-ALTER PUBLICATION supabase_realtime ADD TABLE public.sos_events;
+DROP POLICY IF EXISTS "Leaders can send broadcasts" ON public.broadcast_messages;
+CREATE POLICY "Leaders can send broadcasts" ON public.broadcast_messages FOR INSERT WITH CHECK (auth.role() = 'authenticated');
 
 -- Insert Seed Dindi Groups for Demo
 INSERT INTO public.dindi_groups (name, leader_name, leader_phone, route_sector, total_members)

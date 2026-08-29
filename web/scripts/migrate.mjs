@@ -16,13 +16,6 @@ async function applyMigrations() {
   if (!DATABASE_URL || DATABASE_URL.includes('YOUR_PASSWORD') || DATABASE_URL.includes('placeholder')) {
     console.error(`
 ❌ DATABASE_URL is missing or placeholder.
-
-To run automatic migrations like Prisma/Neon:
-1. Go to Supabase Dashboard -> Project Settings -> Database -> Connection string (URI)
-2. Copy the URI (e.g. postgresql://postgres:[YOUR-PASSWORD]@db.tbxlgbxlorsuiaoedrns.supabase.co:5432/postgres)
-3. Add it to web/.env.local as:
-   DATABASE_URL=postgresql://postgres:[YOUR-PASSWORD]@db.tbxlgbxlorsuiaoedrns.supabase.co:5432/postgres
-4. Run: npm run db:push
 `);
     process.exit(1);
   }
@@ -37,13 +30,18 @@ To run automatic migrations like Prisma/Neon:
     await client.connect();
     console.log('✅ Connected to database!');
 
-    const sqlPath = path.resolve(process.cwd(), '../supabase/migrations/20260829_complete_schema.sql');
-    console.log(`Reading migration file: ${sqlPath}`);
-    const sql = fs.readFileSync(sqlPath, 'utf8');
+    const migrationsDir = path.resolve(process.cwd(), '../supabase/migrations');
+    const files = fs.readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort();
 
-    console.log('Applying complete schema, triggers, and RLS policies...');
-    await client.query(sql);
-    console.log('🎉 Migration successful! All tables, triggers, and policies are now live in Supabase!');
+    for (const file of files) {
+      const sqlPath = path.join(migrationsDir, file);
+      console.log(`\n📄 Executing migration: ${file}...`);
+      const sql = fs.readFileSync(sqlPath, 'utf8');
+      await client.query(sql);
+      console.log(`✅ ${file} applied successfully!`);
+    }
+
+    console.log('\n🎉 ALL DATABASE MIGRATIONS EXECUTED SUCCESSFULLY IN SUPABASE!');
   } catch (err) {
     console.error('❌ Migration failed:', err);
   } finally {
