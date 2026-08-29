@@ -1,5 +1,6 @@
 import React from 'react';
-import { ArrowRight, QrCode, Shield, FileCode2 } from 'lucide-react';
+import Link from 'next/link';
+import { ArrowRight, QrCode, Shield, LogIn } from 'lucide-react';
 
 export const FinalCTASection: React.FC = () => {
   return (
@@ -13,7 +14,7 @@ export const FinalCTASection: React.FC = () => {
           <div className="relative z-10 max-w-3xl">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-parchment border border-surface-border text-saffron text-xs font-bold uppercase tracking-widest mb-6">
               <Shield className="w-3.5 h-3.5" />
-              <span>Experience The Prototype</span>
+              <span>Experience The System</span>
             </div>
 
             <h2 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-ink tracking-tightest leading-[1.12] mb-6">
@@ -26,20 +27,20 @@ export const FinalCTASection: React.FC = () => {
             </p>
 
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
-              <a
-                href="#qr-medical"
+              <Link
+                href="/auth"
                 className="inline-flex items-center justify-center gap-3 bg-saffron hover:bg-saffron-dark text-surface-white font-semibold text-base px-8 py-4 rounded-xl shadow-saffron transition-all transform hover:-translate-y-0.5"
               >
-                <span>View Emergency Medical ID Demo</span>
-                <QrCode className="w-5 h-5" />
-              </a>
+                <span>Sign In to VariRaksha</span>
+                <LogIn className="w-5 h-5" />
+              </Link>
 
               <a
-                href="#how-it-works"
+                href="#qr-medical"
                 className="inline-flex items-center justify-center gap-2 bg-parchment hover:bg-surface-white text-ink border border-surface-border font-semibold text-base px-7 py-4 rounded-xl transition-all shadow-sm"
               >
-                <FileCode2 className="w-4 h-4 text-saffron" />
-                <span>See System Lifecycle</span>
+                <QrCode className="w-4 h-4 text-saffron" />
+                <span>View Emergency ID Demo</span>
                 <ArrowRight className="w-4 h-4" />
               </a>
             </div>

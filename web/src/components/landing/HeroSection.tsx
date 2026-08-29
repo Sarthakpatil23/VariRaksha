@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import Link from 'next/link';
 import { ArrowRight, ShieldAlert, Sparkles, Activity, QrCode } from 'lucide-react';
 
 export const HeroSection: React.FC = () => {
@@ -53,19 +54,19 @@ export const HeroSection: React.FC = () => {
 
           {/* Action CTAs */}
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 mb-12">
-            <a
-              href="#emergency-flow"
+            <Link
+              href="/auth"
               className="inline-flex items-center justify-center gap-3 bg-saffron hover:bg-saffron-dark text-surface-white font-semibold text-base px-7 py-4 rounded-xl shadow-saffron transition-all transform hover:-translate-y-0.5"
             >
-              <span>Explore Safety System</span>
+              <span>Open VariRaksha</span>
               <ArrowRight className="w-4 h-4" />
-            </a>
+            </Link>
 
             <a
-              href="#how-it-works"
+              href="#emergency-flow"
               className="inline-flex items-center justify-center gap-2 bg-parchment-light/80 hover:bg-surface-white text-ink border border-surface-border font-semibold text-base px-6 py-4 rounded-xl transition-all shadow-sm"
             >
-              <span>How It Works</span>
+              <span>Explore Safety Flow</span>
             </a>
           </div>
 

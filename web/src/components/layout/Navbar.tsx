@@ -79,13 +79,13 @@ export const Navbar: React.FC = () => {
           >
             Emergency QR
           </a>
-          <a
-            href="#platform"
+          <Link
+            href="/auth"
             className="inline-flex items-center gap-2 bg-saffron hover:bg-saffron-dark text-surface-white text-sm font-semibold px-5 py-2.5 rounded-xl shadow-card transition-all transform hover:-translate-y-0.5"
           >
             <span>Open VariRaksha</span>
             <ArrowRight className="w-4 h-4" />
-          </a>
+          </Link>
         </div>
 
         {/* Mobile Hamburger Toggle */}
@@ -113,14 +113,14 @@ export const Navbar: React.FC = () => {
               </Link>
             ))}
             <div className="pt-2 flex flex-col gap-3">
-              <a
-                href="#platform"
+              <Link
+                href="/auth"
                 onClick={() => setMobileMenuOpen(false)}
                 className="inline-flex items-center justify-center gap-2 bg-saffron text-surface-white font-semibold py-3 px-4 rounded-xl text-center shadow-card"
               >
                 <span>Open VariRaksha</span>
                 <ArrowRight className="w-4 h-4" />
-              </a>
+              </Link>
             </div>
           </div>
         </div>
