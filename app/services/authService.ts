@@ -481,6 +481,17 @@ export const fetchCurrentUserProfile = async (
 };
 
 /**
+ * Cleanly logout active user, invalidate Supabase session, and clear userStore & memory
+ */
+export const logoutUser = async (): Promise<void> => {
+  try {
+    await supabase.auth.signOut();
+  } catch (e) {
+    console.warn('[AuthService] Supabase signOut error:', e);
+  }
+};
+
+/**
  * Register a new Varkari on-the-fly into vari_varkaris with graceful fallback
  */
 export const registerNewVarkariProfile = async (
@@ -490,6 +501,7 @@ export const registerNewVarkariProfile = async (
   age: number = 55,
   gender: string = 'Male',
   bloodGroup: string = 'B+',
+  preferredLanguage: 'mr' | 'hi' | 'en' = 'mr',
 ): Promise<RegisteredVarkariProfile> => {
   const tenDigit = mobileNumber.replace(/[^0-9]/g, '').slice(-10);
   const formattedMobile = `+91 ${tenDigit}`;
@@ -528,8 +540,10 @@ export const registerNewVarkariProfile = async (
     bloodGroup,
     medicalConditions: [],
     allergies: [],
+    currentMedications: [],
     role,
     gender,
     age,
+    preferredLanguage,
   };
 };

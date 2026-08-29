@@ -1,5 +1,12 @@
 import { Audio } from 'expo-av';
 import * as Speech from 'expo-speech';
+import {
+  askPersonalizedRAG,
+  AIResponsePayload,
+  ConversationTurn,
+  ChatLanguage,
+} from './ragChatService';
+import { getUserLanguagePreference } from '../lib/userStore';
 
 // Sarvam AI API Key (STT & TTS)
 const SARVAM_API_KEY =
@@ -23,7 +30,7 @@ export interface SarvamChatMessage {
 
 /**
  * 1. Speech-to-Text (STT) via Sarvam AI saaras:v3
- * Listening: Transcribes recorded audio into accurate Marathi / Hindi text.
+ * Listening: Transcribes recorded audio into accurate Marathi / Hindi / English text.
  */
 export async function transcribeWithSarvam(
   audioUri: string,
@@ -51,7 +58,7 @@ export async function transcribeWithSarvam(
       method: 'POST',
       headers: {
         'api-subscription-key': SARVAM_API_KEY,
-        'Authorization': `Bearer ${SARVAM_API_KEY}`,
+        Authorization: `Bearer ${SARVAM_API_KEY}`,
       },
       body: formData,
     });
@@ -71,159 +78,41 @@ export async function transcribeWithSarvam(
 }
 
 /**
- * Direct Sarvam AI LLM fallback helper
- */
-async function askSarvamDirect(
-  userQuery: string,
-  persona: 'varkari' | 'dindiLeader',
-  recentHistory: SarvamChatMessage[] = []
-): Promise<string> {
-  const systemPrompt =
-    persona === 'varkari'
-      ? `तुम्ही "वारीरक्षक AI सहाय्यक" आहात - पंढरपूर आषाढी वारीच्या वारकऱ्यांचे डिजिटल रक्षक.
-वारकऱ्यांच्या प्रश्नांना (पाण्याचे थांबे, अन्नछत्र, पालखी मार्ग, अंतर, विश्रांती, प्रथमोपचार, वैद्यकीय मदत) आदरपूर्वक, स्पष्ट आणि मराठीत उत्तरे द्या.
-प्रत्येक उत्तराची सुरुवात "राम कृष्ण हरी 🙏" किंवा "जय हरी माउली 🙏" ने करा.
-उत्तर संक्षिप्त, थेट व समजायला सोपे (२ ते ३ वाक्यांत) ठेवा.
-जर वारकऱ्याला आपत्कालीन मदत किंवा वैद्यकीय त्रास असेल तर त्यांना ताबडतोब जवळच्या वैद्यकीय शिबिरात जाण्यास किंवा लाल SOS बटण दाबण्यास सांगा.`
-      : `तुम्ही "वारीरक्षक दिंडी कमांडर AI" आहात - दिंडी प्रमुख आणि व्यवस्थापकांचे सहाय्यक.
-दिंडीतील वारकऱ्यांचे व्यवस्थापन, हरवलेल्या वारकऱ्यांचा शोध, अन्नछत्र वेळ, आणि दिंडी घोषणा (Broadcast drafts) तयार करण्यास मदत करा.
-संभाषण आदरयुक्त व कार्यक्षम ठेवा. "जय हरी महाराज 🚩" ने सुरुवात करा.`;
-
-  const filteredHistory = recentHistory
-    .filter((m) => m && (m.role === 'user' || m.role === 'assistant'))
-    .map((m) => ({ role: m.role, content: m.content.trim() }));
-
-  if (
-    filteredHistory.length > 0 &&
-    filteredHistory[filteredHistory.length - 1].role === 'user' &&
-    filteredHistory[filteredHistory.length - 1].content === userQuery.trim()
-  ) {
-    filteredHistory.pop();
-  }
-
-  const messages: SarvamChatMessage[] = [
-    { role: 'system', content: systemPrompt },
-    ...filteredHistory.slice(-4),
-    { role: 'user', content: userQuery.trim() },
-  ];
-
-  const response = await fetch('https://api.sarvam.ai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'api-subscription-key': SARVAM_API_KEY,
-      'Authorization': `Bearer ${SARVAM_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: 'sarvam-105b-conversations',
-      messages,
-      temperature: 0.3,
-      max_tokens: 500,
-    }),
-  });
-
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`Sarvam LLM failed with status ${response.status}: ${errText}`);
-  }
-
-  const data = await response.json();
-  const reply = data.choices?.[0]?.message?.content;
-  return reply ? reply.trim() : 'राम कृष्ण हरी 🙏 मी आपल्या सेवेसाठी तत्पर आहे.';
-}
-
-/**
- * 2. Conversational LLM via Groq openai/gpt-oss-120b
- * Thinking: Generates fast, accurate, respectful Marathi guidance.
- * Falls back to Sarvam LLM if needed.
+ * 2. Conversational LLM via Personalized RAG Engine
+ * Invokes the profile-aware, knowledge-retrieved, severity-triaged assistant.
  */
 export async function askGroqAI(
   userQuery: string,
-  persona: 'varkari' | 'dindiLeader',
-  recentHistory: SarvamChatMessage[] = []
+  persona: 'varkari' | 'dindiLeader' = 'varkari',
+  recentHistory: SarvamChatMessage[] = [],
+  explicitLang?: ChatLanguage
 ): Promise<string> {
-  try {
-    const systemPrompt =
-      persona === 'varkari'
-        ? `तुम्ही "वारीरक्षक AI सहाय्यक" आहात - पंढरपूर आषाढी वारीच्या वारकऱ्यांचे डिजिटल रक्षक.
-वारकऱ्यांच्या प्रश्नांना (पाण्याचे थांबे, अन्नछत्र, पालखी मार्ग, अंतर, विश्रांती, प्रथमोपचार, वैद्यकीय मदत) आदरपूर्वक, स्पष्ट आणि मराठीत उत्तरे द्या.
-प्रत्येक उत्तराची सुरुवात "राम कृष्ण हरी 🙏" किंवा "जय हरी माउली 🙏" ने करा.
-उत्तर संक्षिप्त, थेट व समजायला सोपे (२ ते ३ वाक्यांत) ठेवा.
-जर वारकऱ्याला आपत्कालीन मदत किंवा वैद्यकीय त्रास असेल तर त्यांना ताबडतोब जवळच्या वैद्यकीय शिबिरात जाण्यास किंवा लाल SOS बटण दाबण्यास सांगा.`
-        : `तुम्ही "वारीरक्षक दिंडी कमांडर AI" आहात - दिंडी प्रमुख आणि व्यवस्थापकांचे सहाय्यक.
-दिंडीतील वारकऱ्यांचे व्यवस्थापन, हरवलेल्या वारकऱ्यांचा शोध, अन्नछत्र वेळ, आणि दिंडी घोषणा (Broadcast drafts) तयार करण्यास मदत करा.
-संभाषण आदरयुक्त व कार्यक्षम ठेवा. "जय हरी महाराज 🚩" ने सुरुवात करा.`;
+  const turns: ConversationTurn[] = recentHistory.map((m) => ({
+    role: m.role,
+    content: m.content,
+  }));
 
-    // Filter and sanitize history
-    const filteredHistory = recentHistory
-      .filter((m) => m && (m.role === 'user' || m.role === 'assistant'))
-      .map((m) => ({ role: m.role, content: m.content.trim() }));
+  const payload: AIResponsePayload = await askPersonalizedRAG(
+    userQuery,
+    persona,
+    turns,
+    explicitLang
+  );
 
-    // Avoid duplicate user query at end of history
-    if (
-      filteredHistory.length > 0 &&
-      filteredHistory[filteredHistory.length - 1].role === 'user' &&
-      filteredHistory[filteredHistory.length - 1].content === userQuery.trim()
-    ) {
-      filteredHistory.pop();
-    }
-
-    const messages: SarvamChatMessage[] = [
-      { role: 'system', content: systemPrompt },
-      ...filteredHistory.slice(-4),
-      { role: 'user', content: userQuery.trim() },
-    ];
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${GROQ_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: 'openai/gpt-oss-120b',
-        messages,
-        temperature: 0.3,
-        max_tokens: 500,
-      }),
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      const errText = await response.text();
-      console.warn(`[Groq LLM] HTTP Error ${response.status}:`, errText);
-      throw new Error(`Groq LLM failed with status ${response.status}: ${errText}`);
-    }
-
-    const data = await response.json();
-    const reply = data.choices?.[0]?.message?.content;
-    return reply ? reply.trim() : 'राम कृष्ण हरी 🙏 मी आपल्या सेवेसाठी तत्पर आहे.';
-  } catch (error) {
-    console.warn('[Groq LLM Error, falling back to Sarvam LLM]:', error);
-    try {
-      return await askSarvamDirect(userQuery, persona, recentHistory);
-    } catch (sarvamErr) {
-      console.error('[Sarvam Fallback Error]:', sarvamErr);
-      throw error;
-    }
-  }
+  return payload.message;
 }
 
-// Export askSarvamAI alias for full backward compatibility across all existing components
+// Re-export askPersonalizedRAG for direct structured consumption
+export { askPersonalizedRAG };
 export const askSarvamAI = askGroqAI;
 
 /**
  * 3. Text-to-Speech (TTS) via Sarvam AI bulbul:v3
- * Converts Marathi response text into natural voice audio stream.
+ * Converts Marathi / Hindi response text into natural voice audio stream.
  */
 export async function convertTextToSpeech(
   text: string,
-  targetLanguageCode: 'mr-IN' | 'hi-IN' = 'mr-IN',
+  targetLanguageCode: 'mr-IN' | 'hi-IN' | 'en-IN' = 'mr-IN',
   speaker: string = 'pooja'
 ): Promise<string> {
   try {
@@ -232,16 +121,24 @@ export async function convertTextToSpeech(
       .replace(/\s+/g, ' ')
       .trim();
 
+    // Map language code for Sarvam TTS (supports mr-IN, hi-IN, en-IN)
+    const sarvamLang =
+      targetLanguageCode === 'en-IN'
+        ? 'en-IN'
+        : targetLanguageCode === 'hi-IN'
+        ? 'hi-IN'
+        : 'mr-IN';
+
     const response = await fetch('https://api.sarvam.ai/text-to-speech', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'api-subscription-key': SARVAM_API_KEY,
-        'Authorization': `Bearer ${SARVAM_API_KEY}`,
+        Authorization: `Bearer ${SARVAM_API_KEY}`,
       },
       body: JSON.stringify({
         inputs: [cleanText.slice(0, 450)],
-        target_language_code: targetLanguageCode,
+        target_language_code: sarvamLang,
         speaker,
         model: 'bulbul:v3',
         enable_preprocessing: true,
@@ -268,7 +165,8 @@ export async function convertTextToSpeech(
 export async function playSarvamAudio(
   base64Audio: string,
   fallbackText?: string,
-  onFinish?: () => void
+  onFinish?: () => void,
+  lang: 'mr' | 'hi' | 'en' = 'mr'
 ): Promise<void> {
   try {
     await stopAudioPlayback();
@@ -301,10 +199,11 @@ export async function playSarvamAudio(
       }
     }
 
-    // Fallback to native speech
+    // Fallback to native speech with appropriate language
     if (fallbackText) {
+      const speechLang = lang === 'en' ? 'en' : lang === 'hi' ? 'hi' : 'mr';
       Speech.speak(fallbackText, {
-        language: 'mr',
+        language: speechLang,
         pitch: 1.0,
         rate: 0.95,
         onDone: () => {

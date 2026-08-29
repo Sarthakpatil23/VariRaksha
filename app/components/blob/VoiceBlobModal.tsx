@@ -18,12 +18,21 @@ import { colors, typography } from '../../constants';
 import { ThinkingOrb } from './ThinkingOrb';
 import { sendUserChatMessage, ChatPersona } from '../../lib/chatStore';
 import {
+  useUserProfile,
+  getUserLanguagePreference,
+  setUserLanguagePreference,
+} from '../../lib/userStore';
+import {
   transcribeWithSarvam,
-  askSarvamAI,
   convertTextToSpeech,
   playSarvamAudio,
   stopAudioPlayback,
 } from '../../services/sarvamService';
+import {
+  askPersonalizedRAG,
+  ChatLanguage,
+  AIResponsePayload,
+} from '../../services/ragChatService';
 
 interface VoiceBlobModalProps {
   visible: boolean;
@@ -36,10 +45,11 @@ interface VoiceBlobModalProps {
 /**
  * Sarvam AI Voice Assistant Modal
  * Features:
- * - Sarvam STT (saarika:v2) for accurate Marathi voice recognition
- * - Sarvam LLM (sarvam-2b) for contextual pilgrim safety guidance
- * - Sarvam TTS (bulbul:v2) for natural Marathi speech response
+ * - Profile-aware Personalized RAG Guidance
+ * - Sarvam STT (saaras:v3) with dynamic language code (mr-IN, hi-IN, en-IN)
+ * - Sarvam TTS (bulbul:v3) & Expo Speech fallback
  * - Dynamic State-Reactive ThinkingOrb (Vitthal Blue -> Saffron Gold -> Tulsi Green)
+ * - In-Modal Multi-Language Selector (मराठी | हिन्दी | English)
  */
 export const VoiceBlobModal: React.FC<VoiceBlobModalProps> = ({
   visible,
@@ -48,6 +58,11 @@ export const VoiceBlobModal: React.FC<VoiceBlobModalProps> = ({
   onSwitchToChat,
   mode = 'varkari',
 }) => {
+  const profile = useUserProfile();
+  const [currentLang, setCurrentLang] = useState<ChatLanguage>(
+    getUserLanguagePreference() || 'mr'
+  );
+
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [voiceState, setVoiceState] = useState<
     'idle' | 'listening' | 'processing' | 'speaking'
@@ -67,13 +82,25 @@ export const VoiceBlobModal: React.FC<VoiceBlobModalProps> = ({
     }
 
     setLiveTranscript('');
-    setAiResponseText('राम कृष्ण हरी! बोलणे सुरू करा, मी ऐकत आहे...');
+    const initialGreeting =
+      currentLang === 'en'
+        ? 'Ram Krishna Hari! Speak now, I am listening...'
+        : currentLang === 'hi'
+        ? 'राम कृष्ण हरी! बोलिए, मैं सुन रहा हूँ...'
+        : 'राम कृष्ण हरी! बोलणे सुरू करा, मी ऐकत आहे...';
+    setAiResponseText(initialGreeting);
     startVoiceRecording();
 
     return () => {
       stopCurrentSession();
     };
-  }, [visible]);
+  }, [visible, currentLang]);
+
+  const handleSwitchLanguage = (langCode: ChatLanguage) => {
+    Vibration.vibrate(25);
+    setCurrentLang(langCode);
+    setUserLanguagePreference(langCode);
+  };
 
   const stopCurrentSession = async () => {
     try {
@@ -95,7 +122,13 @@ export const VoiceBlobModal: React.FC<VoiceBlobModalProps> = ({
 
       const { status } = await Audio.requestPermissionsAsync();
       if (status !== 'granted') {
-        setAiResponseText('मायक्रोफोन परवानगी आवश्यक आहे.');
+        setAiResponseText(
+          currentLang === 'en'
+            ? 'Microphone permission is required.'
+            : currentLang === 'hi'
+            ? 'माइक्रोफ़ोन अनुमति आवश्यक है।'
+            : 'मायक्रोफोन परवानगी आवश्यक आहे.'
+        );
         return;
       }
 
@@ -120,14 +153,20 @@ export const VoiceBlobModal: React.FC<VoiceBlobModalProps> = ({
     }
   };
 
-  // 2. Stop Recording & Trigger Sarvam STT -> LLM -> TTS
+  // 2. Stop Recording & Trigger Personalized RAG Pipeline
   const stopAndProcessVoice = async () => {
     if (!recordingRef.current) return;
 
     try {
       Vibration.vibrate(30);
       setVoiceState('processing');
-      setAiResponseText('आपला आवाज ऐकला... विचार करत आहे...');
+      setAiResponseText(
+        currentLang === 'en'
+          ? 'Listening complete... Thinking...'
+          : currentLang === 'hi'
+          ? 'आवाज सुनी गई... विचार कर रहा हूँ...'
+          : 'आपला आवाज ऐकला... विचार करत आहे...'
+      );
 
       const recording = recordingRef.current;
       await recording.stopAndUnloadAsync();
@@ -140,16 +179,24 @@ export const VoiceBlobModal: React.FC<VoiceBlobModalProps> = ({
         return;
       }
 
-      // Step A: Sarvam STT (saarika:v2)
+      // Step A: Sarvam STT (saaras:v3)
+      const sttLangCode =
+        currentLang === 'en' ? 'en-IN' : currentLang === 'hi' ? 'hi-IN' : 'mr-IN';
       let transcript = '';
       try {
-        transcript = await transcribeWithSarvam(uri, 'mr-IN');
+        transcript = await transcribeWithSarvam(uri, sttLangCode);
       } catch (sttErr) {
         console.warn('STT API failed, checking manual input');
       }
 
       if (!transcript) {
-        setAiResponseText('आवाज स्पष्ट आला नाही. कृपया पुन्हा बोला किंवा टाईप करा.');
+        setAiResponseText(
+          currentLang === 'en'
+            ? 'Voice was not clear. Please speak again or type.'
+            : currentLang === 'hi'
+            ? 'आवाज स्पष्ट नहीं आई। कृपया पुनः बोलें या टाइप करें।'
+            : 'आवाज स्पष्ट आला नाही. कृपया पुन्हा बोला किंवा टाईप करा.'
+        );
         setVoiceState('idle');
         return;
       }
@@ -159,29 +206,54 @@ export const VoiceBlobModal: React.FC<VoiceBlobModalProps> = ({
         onTranscriptComplete(transcript);
       }
 
-      // Step B: Sarvam LLM (sarvam-2b)
-      const aiReply = await askSarvamAI(transcript, mode);
-      setAiResponseText(aiReply);
+      // Step B: Personalized RAG Generation
+      const payload: AIResponsePayload = await askPersonalizedRAG(
+        transcript,
+        mode,
+        [],
+        currentLang
+      );
+      setAiResponseText(payload.message);
 
       // Save to global chatStore
-      sendUserChatMessage(mode, transcript);
+      sendUserChatMessage(mode, transcript, currentLang);
 
       // Step C: Sarvam TTS (bulbul:v3) & Audio Playback
       setVoiceState('speaking');
       try {
-        const base64Audio = await convertTextToSpeech(aiReply, 'mr-IN', 'pooja');
-        await playSarvamAudio(base64Audio, aiReply, () => {
-          setVoiceState('idle');
-        });
+        const base64Audio = await convertTextToSpeech(
+          payload.message,
+          sttLangCode,
+          'pooja'
+        );
+        await playSarvamAudio(
+          base64Audio,
+          payload.message,
+          () => {
+            setVoiceState('idle');
+          },
+          currentLang
+        );
       } catch (ttsErr) {
         // Fallback to native speech
-        await playSarvamAudio('', aiReply, () => {
-          setVoiceState('idle');
-        });
+        await playSarvamAudio(
+          '',
+          payload.message,
+          () => {
+            setVoiceState('idle');
+          },
+          currentLang
+        );
       }
     } catch (err) {
       console.error('Voice processing pipeline error:', err);
-      setAiResponseText('माफ करा, संपर्क साधता आला नाही. कृपया पुन्हा प्रयत्न करा.');
+      setAiResponseText(
+        currentLang === 'en'
+          ? 'Could not connect. Please try again.'
+          : currentLang === 'hi'
+          ? 'माफ़ करें, संपर्क नहीं हो सका। पुनः प्रयास करें।'
+          : 'माफ करा, संपर्क साधता आला नाही. कृपया पुन्हा प्रयत्न करा.'
+      );
       setVoiceState('idle');
     }
   };
@@ -214,25 +286,68 @@ export const VoiceBlobModal: React.FC<VoiceBlobModalProps> = ({
     setInputText('');
     setLiveTranscript(text);
     setVoiceState('processing');
-    setAiResponseText('उत्तर तयार करत आहे...');
+    setAiResponseText(
+      currentLang === 'en'
+        ? 'Generating answer...'
+        : currentLang === 'hi'
+        ? 'उत्तर तैयार कर रहा हूँ...'
+        : 'उत्तर तयार करत आहे...'
+    );
 
     try {
-      const aiReply = await askSarvamAI(text, mode);
-      setAiResponseText(aiReply);
-      sendUserChatMessage(mode, text);
+      const payload: AIResponsePayload = await askPersonalizedRAG(
+        text,
+        mode,
+        [],
+        currentLang
+      );
+      setAiResponseText(payload.message);
+      sendUserChatMessage(mode, text, currentLang);
 
       setVoiceState('speaking');
-      const base64Audio = await convertTextToSpeech(aiReply, 'mr-IN', 'pooja');
-      await playSarvamAudio(base64Audio, aiReply, () => {
-        setVoiceState('idle');
-      });
+      const sttLangCode =
+        currentLang === 'en' ? 'en-IN' : currentLang === 'hi' ? 'hi-IN' : 'mr-IN';
+      const base64Audio = await convertTextToSpeech(
+        payload.message,
+        sttLangCode,
+        'pooja'
+      );
+      await playSarvamAudio(
+        base64Audio,
+        payload.message,
+        () => {
+          setVoiceState('idle');
+        },
+        currentLang
+      );
     } catch (err) {
-      sendUserChatMessage(mode, text);
+      sendUserChatMessage(mode, text, currentLang);
       handleCloseAndSwitchToChat();
     }
   };
 
   if (!visible) return null;
+
+  const isVarkari = mode === 'varkari';
+  const userName = profile?.fullName || (isVarkari ? 'वारकरी भाविक' : 'दिंडी प्रमुख');
+
+  const title =
+    currentLang === 'en'
+      ? isVarkari
+        ? 'VariRaksha Voice AI'
+        : 'Dindi Commander Voice AI'
+      : currentLang === 'hi'
+      ? isVarkari
+        ? 'वारीरक्षक वॉइस AI'
+        : 'वारीरक्षक दिंडी कमांडर वॉइस AI'
+      : 'वारीरक्षक AI व्हॉईस सहाय्यक';
+
+  const subtitle =
+    currentLang === 'en'
+      ? `👤 For ${userName}`
+      : currentLang === 'hi'
+      ? `👤 ${userName} के लिए`
+      : `👤 ${userName} यांच्यासाठी`;
 
   return (
     <Modal
@@ -249,18 +364,34 @@ export const VoiceBlobModal: React.FC<VoiceBlobModalProps> = ({
           {/* Top Bar */}
           <View style={styles.topBar}>
             <View style={styles.titleWrapper}>
-              <Text style={styles.topTitle}>वारीरक्षक AI व्हॉईस सहाय्यक</Text>
-              <Text style={styles.topSubtitle}>
-                {isMuted
-                  ? 'मायक्रोफोन बंद आहे'
-                  : voiceState === 'listening'
-                  ? '🎧 ऐकत आहे (Listening)...'
-                  : voiceState === 'processing'
-                  ? '⚡ विचार करत आहे (Thinking)...'
-                  : voiceState === 'speaking'
-                  ? '🗣️ बोलत आहे (Speaking)...'
-                  : 'विश्रांती (Idle)'}
+              <Text style={styles.topTitle}>{title}</Text>
+              <Text style={styles.topSubtitle} numberOfLines={1}>
+                {subtitle}
               </Text>
+            </View>
+
+            {/* Language Switcher in Voice Modal */}
+            <View style={styles.langSelectorPill}>
+              {(['mr', 'hi', 'en'] as ChatLanguage[]).map((code) => (
+                <TouchableOpacity
+                  key={`modal-lang-${code}`}
+                  activeOpacity={0.8}
+                  onPress={() => handleSwitchLanguage(code)}
+                  style={[
+                    styles.langOptionBtn,
+                    currentLang === code && styles.langOptionBtnActive,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.langOptionText,
+                      currentLang === code && styles.langOptionTextActive,
+                    ]}
+                  >
+                    {code === 'mr' ? 'मराठी' : code === 'hi' ? 'हिन्दी' : 'EN'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
             </View>
 
             <TouchableOpacity
@@ -307,7 +438,11 @@ export const VoiceBlobModal: React.FC<VoiceBlobModalProps> = ({
               <Feather name="edit-3" size={16} color={colors.saffronDark} style={styles.plusIcon} />
               <TextInput
                 style={styles.pillTextInput}
-                placeholder="प्रश्न टाईप करा किंवा बोला..."
+                placeholder={
+                  currentLang === 'en'
+                    ? 'Type or speak your question...'
+                    : 'प्रश्न टाईप करा किंवा बोला...'
+                }
                 placeholderTextColor={colors.textSecondary}
                 value={inputText}
                 onChangeText={setInputText}
@@ -369,25 +504,56 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 4,
     paddingVertical: 8,
+    gap: 8,
   },
   titleWrapper: {
     flex: 1,
   },
   topTitle: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: typography.fontWeight.bold,
     color: colors.maroon,
   },
   topSubtitle: {
-    fontSize: 12,
+    fontSize: 11,
     color: colors.textSecondary,
     marginTop: 2,
     fontWeight: '600',
   },
+  langSelectorPill: {
+    flexDirection: 'row',
+    backgroundColor: '#F3EFE9',
+    borderRadius: 14,
+    padding: 2,
+    borderWidth: 1,
+    borderColor: '#E2D8CC',
+  },
+  langOptionBtn: {
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 12,
+  },
+  langOptionBtnActive: {
+    backgroundColor: colors.maroon,
+    shadowColor: colors.maroon,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  langOptionText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: colors.textSecondary,
+  },
+  langOptionTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
   circleIconButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     backgroundColor: 'rgba(93, 0, 30, 0.08)',
     justifyContent: 'center',
     alignItems: 'center',
@@ -461,7 +627,7 @@ const styles = StyleSheet.create({
   },
   pillTextInput: {
     flex: 1,
-    fontSize: 15,
+    fontSize: 14,
     color: colors.text,
     paddingVertical: 0,
     fontWeight: '500',

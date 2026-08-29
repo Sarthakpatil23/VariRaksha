@@ -4,20 +4,24 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { colors } from '../../constants';
 import { VariRakshaChatbot } from '../../components/chat/VariRakshaChatbot';
-import { useUserRole } from '../../lib/userStore';
+import { useUserRole, useUserProfile } from '../../lib/userStore';
 
 export const ChatScreen: React.FC = () => {
   const navigation = useNavigation<any>();
   const role = useUserRole();
+  const profile = useUserProfile();
   const persona = role === 'dindiLeader' ? 'dindiLeader' : 'varkari';
 
   const handleActionPress = (actionType: string) => {
     Vibration.vibrate(30);
 
+    const leaderName = profile?.dindiLeaderName || 'ह.भ.प. सोपानराव महाराज';
+    const leaderPhone = '+91 98765 43210';
+
     if (actionType === 'call_leader') {
       Alert.alert(
         '📞 Call Dindi Leader',
-        'Calling ह.भ.प. सोपानराव महाराज (+91 98765 43210)...',
+        `Calling ${leaderName} (${leaderPhone})...`,
         [
           { text: 'Cancel', style: 'cancel' },
           { text: 'Call Now', style: 'default' },
@@ -25,12 +29,12 @@ export const ChatScreen: React.FC = () => {
       );
     } else if (actionType === 'medical_sos') {
       Alert.alert(
-        '🚑 Route Medical Camp',
-        'Mobile Medical Unit #2 alerted to your GPS location.',
+        '🚑 Route Medical Emergency',
+        'Mobile Medical Camp #2 alerted with your GPS location and emergency medical card.',
         [
           { text: 'Cancel', style: 'cancel' },
           {
-            text: 'View Medical ID',
+            text: 'View Emergency Card',
             onPress: () => {
               try {
                 navigation.navigate('Medical');

@@ -24,8 +24,10 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
   timestamp?: string;
-  actionType?: 'call_leader' | 'medical_sos' | 'broadcast' | 'meetup';
+  actionType?: 'call_leader' | 'medical_sos' | 'broadcast' | 'meetup' | 'none';
   actionLabel?: string;
+  severity?: 'low' | 'moderate' | 'emergency';
+  show_sos?: boolean;
 }
 
 interface MessageScrollerContextType {
@@ -153,6 +155,9 @@ export const MessageScrollerItem: React.FC<MessageScrollerItemProps> = ({
     );
   }
 
+  const isEmergency = message.severity === 'emergency' || message.show_sos === true;
+  const hasValidAction = message.actionType && message.actionType !== 'none';
+
   return (
     <View style={[styles.itemRow, isUser ? styles.itemRowUser : styles.itemRowAssistant]}>
       <View style={[styles.bubble, isUser ? styles.bubbleUser : styles.bubbleAssistant]}>
@@ -161,27 +166,30 @@ export const MessageScrollerItem: React.FC<MessageScrollerItemProps> = ({
         </Text>
 
         {/* Action Button if attached */}
-        {message.actionType && (
+        {hasValidAction && (
           <TouchableOpacity
             activeOpacity={0.85}
             onPress={() => onActionPress && onActionPress(message.actionType!)}
-            style={styles.actionButton}
+            style={[
+              styles.actionButton,
+              isEmergency && styles.emergencyActionButton,
+            ]}
           >
             <Ionicons
               name={
                 message.actionType === 'call_leader'
                   ? 'call'
-                  : message.actionType === 'medical_sos'
-                  ? 'medkit'
+                  : message.actionType === 'medical_sos' || isEmergency
+                  ? 'alert-circle'
                   : message.actionType === 'broadcast'
                   ? 'megaphone'
                   : 'location'
               }
-              size={14}
+              size={16}
               color="#FFFFFF"
             />
             <Text style={styles.actionButtonText}>
-              {message.actionLabel || 'Action'}
+              {message.actionLabel || (isEmergency ? '🚨 Emergency SOS' : 'Action')}
             </Text>
           </TouchableOpacity>
         )}
@@ -284,9 +292,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.maroon,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 14,
     marginTop: 10,
     alignSelf: 'flex-start',
     gap: 6,
@@ -295,6 +303,16 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 3,
     elevation: 2,
+  },
+  emergencyActionButton: {
+    backgroundColor: '#DC2626',
+    shadowColor: '#DC2626',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.35,
+    shadowRadius: 6,
+    elevation: 4,
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
   },
   actionButtonText: {
     fontSize: 13,

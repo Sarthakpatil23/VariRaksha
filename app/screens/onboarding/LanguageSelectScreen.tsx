@@ -11,6 +11,9 @@ import { useTranslation } from 'react-i18next';
 import { OnboardingScreenProps } from '../../navigation/types';
 import { colors, spacing } from '../../constants';
 
+import { setUserLanguagePreference } from '../../lib/userStore';
+import { clearChatMessages } from '../../lib/chatStore';
+
 type LanguageCode = 'mr' | 'hi' | 'en';
 
 interface LanguageOption {
@@ -60,11 +63,17 @@ export const LanguageSelectScreen: React.FC<OnboardingScreenProps<'LanguageSelec
 
   const handleSelectLanguage = (code: LanguageCode) => {
     setSelectedLang(code);
+    setUserLanguagePreference(code);
+    clearChatMessages('varkari', code);
+    clearChatMessages('dindiLeader', code);
     // Dynamically change global locale for all present and future pages
     i18n.changeLanguage(code);
   };
 
   const handleContinue = () => {
+    setUserLanguagePreference(selectedLang);
+    clearChatMessages('varkari', selectedLang);
+    clearChatMessages('dindiLeader', selectedLang);
     i18n.changeLanguage(selectedLang);
     navigation.navigate('RoleSelect');
   };
