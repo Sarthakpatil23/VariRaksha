@@ -1,0 +1,84 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-parchment: #F5E8D4;
+  --bg-parchment-light: #FBF4E9;
+  --bg-parchment-deep: #EBD7BD;
+  --text-ink: #172238;
+  --text-ink-soft: #30405A;
+  --text-muted: #6E706F;
+  --border-parchment: #DCCCB7;
+  --surface-white: #FFFDF8;
+  --accent-saffron: #D97732;
+  --accent-saffron-dark: #A84F1F;
+  --accent-terracotta: #B65F46;
+  --accent-maroon: #7E2630;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--bg-parchment);
+  color: var(--text-ink);
+  font-family: var(--font-manrope), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background-color: #D97732;
+  color: #FFFDF8;
+}
+
+/* Restrained custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #F5E8D4;
+}
+::-webkit-scrollbar-thumb {
+  background: #DCCCB7;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #B65F46;
+}
+
+/* Editorial micro-typography & line clamps */
+.text-balance {
+  text-wrap: balance;
+}
+
+/* Subtle texture gradient */
+.bg-parchment-gradient {
+  background: linear-gradient(180deg, #FBF4E9 0%, #F5E8D4 100%);
+}
+
+.hero-parchment-fade {
+  background: linear-gradient(
+    90deg,
+    #F5E8D4 0%,
+    #F5E8D4 38%,
+    rgba(245, 232, 212, 0.92) 52%,
+    rgba(245, 232, 212, 0.45) 75%,
+    rgba(245, 232, 212, 0.05) 100%
+  );
+}
+
+@media (max-width: 768px) {
+  .hero-parchment-fade {
+    background: linear-gradient(
+      180deg,
+      #F5E8D4 0%,
+      rgba(245, 232, 212, 0.95) 45%,
+      rgba(245, 232, 212, 0.6) 80%,
+      rgba(245, 232, 212, 0.15) 100%
+    );
+  }
+}
