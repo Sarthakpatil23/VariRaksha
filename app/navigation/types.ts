@@ -46,8 +46,10 @@ export type VolunteerTabParamList = {
 
 export type MedicalStaffTabParamList = {
   MedicalStaffDashboard: undefined;
-  PatientRecords: undefined;
+  Alerts: undefined;
+  Tasks: undefined;
   Profile: undefined;
+  PatientRecords?: undefined;
   Settings?: undefined;
 };
 
