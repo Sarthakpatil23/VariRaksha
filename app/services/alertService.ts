@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabaseClient';
 import { UserProfile, getUserAIContext } from '../lib/userStore';
+import * as Location from 'expo-location';
 import {
   calculateDynamicPriority,
   prioritizeEmergencyAlerts,
@@ -108,6 +109,28 @@ export async function captureCurrentLocation(): Promise<{
   };
 
   try {
+    // 1. Try native Expo Location API
+    const perm = await Location.getForegroundPermissionsAsync();
+    if (perm.granted) {
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+
+      if (position?.coords) {
+        return {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          locationName: 'Palkhi Route (Live GPS)',
+          isFallback: false,
+        };
+      }
+    }
+  } catch (err) {
+    console.log('[AlertService] Expo Location error, trying web geolocation:', err);
+  }
+
+  try {
+    // 2. Web Geolocation API fallback
     if (typeof navigator !== 'undefined' && navigator.geolocation) {
       const position = await new Promise<GeolocationPosition>((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(resolve, reject, {

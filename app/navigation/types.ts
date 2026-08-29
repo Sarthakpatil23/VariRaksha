@@ -12,6 +12,7 @@ export type OnboardingStackParamList = {
   ProfileNotFound: { mobileNumber?: string; selectedRole?: string } | undefined;
   EmergencyID: undefined;
   HowItWorks: undefined;
+  PermissionsSetup: undefined;
   Consent: undefined;
 };
 

@@ -12,6 +12,7 @@ import ProfileConfirmScreen from '../screens/onboarding/ProfileConfirmScreen';
 import ProfileNotFoundScreen from '../screens/onboarding/ProfileNotFoundScreen';
 import EmergencyIDScreen from '../screens/onboarding/EmergencyIDScreen';
 import HowItWorksScreen from '../screens/onboarding/HowItWorksScreen';
+import PermissionsSetupScreen from '../screens/onboarding/PermissionsSetupScreen';
 import ConsentScreen from '../screens/onboarding/ConsentScreen';
 
 const Stack = createNativeStackNavigator<OnboardingStackParamList>();
@@ -34,6 +35,7 @@ export const OnboardingStack: React.FC = () => {
       <Stack.Screen name="ProfileNotFound" component={ProfileNotFoundScreen} />
       <Stack.Screen name="EmergencyID" component={EmergencyIDScreen} />
       <Stack.Screen name="HowItWorks" component={HowItWorksScreen} />
+      <Stack.Screen name="PermissionsSetup" component={PermissionsSetupScreen} />
       <Stack.Screen name="Consent" component={ConsentScreen} />
     </Stack.Navigator>
   );

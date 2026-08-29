@@ -59,13 +59,7 @@ export const HowItWorksScreen: React.FC<OnboardingScreenProps<'HowItWorks'>> = (
     try {
       player.pause();
     } catch (e) {}
-    const parentNav = navigation.getParent();
-
-    if (parentNav) {
-      (parentNav as any).navigate('MainApp');
-    } else {
-      (navigation as any).navigate('MainApp');
-    }
+    navigation.navigate('PermissionsSetup');
   };
 
   return (
