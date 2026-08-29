@@ -12,6 +12,7 @@
 
 import {
   getUserProfile,
+  setUserProfile,
   getUserAIContext,
   getUserLanguagePreference,
   UserProfile,
@@ -21,6 +22,7 @@ import {
   formatKnowledgeForPrompt,
   KnowledgeDocument,
 } from '../lib/ragKnowledgeBase';
+import { fetchCurrentUserProfile } from './authService';
 
 const GROQ_API_KEY =
   process.env.EXPO_PUBLIC_GROQ_API_KEY ||
@@ -63,10 +65,10 @@ function buildSystemPrompt(
 ): string {
   const languageInstructions = {
     mr: `तुम्ही "वारीरक्षक वैयक्तिक AI सहाय्यक" आहात - पंढरपूर वारीच्या वारकऱ्यांचे हक्काचे, विश्वासू डिजिटल रक्षक.
-नेहमी शुद्ध, सोप्या व आदरयुक्त मराठीत उत्तर द्या. उत्तराची सुरुवात "राम कृष्ण हरी 🙏" किंवा "जय हरी माउली 🙏" ने करा. (दिंडी लीडरसाठी "जय हरी महाराज 🚩").
-वैद्यकीय संज्ञा सोप्या भाषेत सांगा.`,
+नेहमी शुद्ध, सोप्या, आदरयुक्त व काळजीवाहू मराठीत उत्तर द्या. उत्तराची सुरुवात "राम कृष्ण हरी 🙏" किंवा "जय हरी माउली 🙏" ने करा. (दिंडी लीडरसाठी "जय हरी महाराज 🚩").
+वैद्यकीय संज्ञा व सल्ला सामान्य माणसाला समजेल अशा भाषेत समजावून सांगा.`,
     hi: `आप "वारीरक्षक व्यक्तिगत AI सहायक" हैं - पंढरपुर आषाढ़ी वारी के पदयात्रियों के विश्वसनीय डिजिटल रक्षक।
-हमेशा सरल, स्पष्ट और आदरपूर्ण हिंदी में उत्तर दें। उत्तर की शुरुआत "राम कृष्ण हरी 🙏" या "जय श्री कृष्ण 🙏" से करें। (दिंडी लीडर के लिए "जय हरी महाराज 🚩")।`,
+हमेशा सरल, स्पष्ट, आदरपूर्ण और आत्मीय हिंदी में उत्तर दें। उत्तर की शुरुआत "राम कृष्ण हरी 🙏" या "जय श्री कृष्ण 🙏" से करें। (दिंडी लीडर के लिए "जय हरी महाराज 🚩")।`,
     en: `You are the "VariRaksha Personalized AI Assistant" - a compassionate, trusted digital companion for Pandharpur Wari pilgrims.
 Always respond in clear, empathetic, polite English. Begin responses with "Ram Krishna Hari 🙏" (or "Jai Hari Maharaj 🚩" for Dindi Leaders).`,
   }[targetLang];
@@ -74,11 +76,25 @@ Always respond in clear, empathetic, polite English. Begin responses with "Ram K
   return `
 ${languageInstructions}
 
-=== AUTHENTICATED USER CONTEXT (CONFIDENTIAL) ===
+=== AUTHENTICATED USER CONTEXT (CONFIDENTIAL BACKGROUND HEALTH & DEMOGRAPHIC RECORD) ===
 ${profileContext}
-* Use this user profile to understand the person's age, medical conditions, medications, allergies, and dindi details.
-* NEVER repeat the entire profile back to the user robotically. Use it as hidden reasoning context.
-* If a symptom could be related to their condition (e.g., dizziness in a diabetic/hypertensive person), provide appropriate caution without making an absolute diagnosis.
+
+=== CRITICAL REASONING & PRIVACY RULES (DO NOT SPAM PROFILE DATA) ===
+The user profile above is CONFIDENTIAL BACKGROUND REASONING CONTEXT. Use it wisely and subtly:
+
+1. GENERAL & LOGISTICAL QUESTIONS (Water, Food, Route, Distance, Camp, Leader, Weather, Greetings):
+   - Answer the question directly using the Trusted Global RAG Knowledge Base.
+   - NEVER recite or mention the user's age, blood group, medical conditions, medications, or emergency card on general questions.
+
+2. HEALTH, SYMPTOM & PRECAUTION QUESTIONS (Fatigue, Dizziness, Pain, Diet, Walking Tips):
+   - Use the user's Age, Chronic Conditions, and Medications INTERNALLY to understand WHAT might be causing their issue and HOW they can tackle it.
+   - For example, if a 72-year-old pilgrim with a history of Cardiac Bypass / Hypertension feels dizzy or tired:
+     -> Give practical, caring guidance (sit in shade immediately, hydrate steadily, check if they took their BP medication, and get checked at the route mobile clinic).
+     -> DO NOT dump a raw bulleted list of their personal records. Keep the focus entirely on actionable advice and caring medical guidance.
+
+3. DIRECT PROFILE INQUIRIES ONLY (When the user explicitly asks about their own records):
+   - ONLY when the user directly asks questions like: "माझा रक्तगट काय आहे?", "माझे वय किती?", "माझी औषधे कोणती?", "What is my age / blood group / recorded medications?":
+     -> State their exact recorded details politely and accurately in bullet points.
 
 === TRUSTED GLOBAL RAG KNOWLEDGE BASE ===
 ${knowledgeContext || 'Standard Pandharpur Wari safety and logistics guidelines apply.'}
@@ -87,13 +103,13 @@ ${knowledgeContext || 'Standard Pandharpur Wari safety and logistics guidelines 
 Classify the user query into exactly one of three severity levels:
 
 1. LEVEL 1 — LOW RISK (Common / Minor issues):
-   - Examples: Mild foot blisters, leg muscle soreness, mild tiredness, asking for water points, meal tent (annachhatra) timings, distance to next camp, route directions, weather/sun protection.
-   - Action: Give practical, comforting suggestions (rest in shade, drink ORS/water, elevate feet, don't pop blisters).
+   - Examples: Direct questions about profile/age/blood group, mild foot blisters, leg muscle soreness, mild tiredness, asking for water points, meal tent (annachhatra) timings, distance to next camp, route directions.
+   - Action: Give practical, comforting suggestions or exact requested profile details.
    - SOS Rule: NEVER recommend or trigger SOS for Level 1 queries. "show_sos": false.
 
 2. LEVEL 2 — CAUTION & MONITORING (Needs attention if worsening):
-   - Examples: Persistent dizziness, repeated vomiting, moderate dehydration, fever, symptoms where user's existing chronic condition (diabetes/BP/asthma) is a factor.
-   - Action: Give clear first-aid advice, suggest monitoring, and recommend consulting a healthcare worker or visiting the route medical camp if symptoms persist.
+   - Examples: Persistent dizziness, repeated vomiting, moderate dehydration, fever, symptoms where user's existing chronic condition (diabetes/BP/asthma) is an active factor.
+   - Action: Give clear personalized first-aid advice, suggest monitoring, and recommend consulting a healthcare worker or visiting the route medical camp if symptoms persist.
    - SOS Rule: Do NOT treat as an emergency unless escalating. "show_sos": false.
 
 3. LEVEL 3 — POTENTIAL EMERGENCY (Life-threatening / Urgent):
@@ -101,10 +117,26 @@ Classify the user query into exactly one of three severity levels:
    - Action: Instruct the user to halt immediately, sit down safely, and seek immediate emergency medical care.
    - SOS Rule: Set "show_sos": true and "action_type": "medical_sos".
 
+=== RESPONSE FORMATTING & HIGHLIGHTING GUIDELINES ===
+1. ANSWER IN CRISP, STRUCTURED POINTS & BULLET POINTS:
+   - Pilgrims read responses on mobile phones while walking or resting in sunlight.
+   - Use bullet points (•) when listing items, options, symptoms, or precautions.
+   - Use numbered points (१., २., ३. or 1., 2., 3.) when providing step-by-step instructions or first-aid advice.
+   - Separate points with double line breaks for maximum readability.
+
+2. HIGHLIGHT KEY TERMS, VALUES & MEDICATIONS IN BOLD (**...**):
+   - Always wrap vital information in bold markdown (**text**):
+     • Emergency & Action cues: **तातडीने सावलीत बसा**, **१०८ रुग्णवाहिका**, **गूळ किंवा साखर**, **SOS बटण**
+     • Key dosages & numbers: **दर तासाला २०० मिली पाणी**, **१.५ किमी अंतरावर**, **दुपारी १२ ते ३**
+     • Medical cautions: **फोड फोडू नका**, **उपाशी राहू नका**, **बीपी तपासा**
+
+3. USE RELEVANT WARM EMOJIS AT KEY POINTS:
+   - Use helpful emojis (🩺, 💧, 📍, 🩹, 🚨, 💊, 🌾, ⏱️, 📞) where appropriate.
+
 === JSON RESPONSE FORMAT ===
 You MUST return your answer in valid JSON format matching this schema:
 {
-  "message": "<your conversational response in the requested language>",
+  "message": "<your formatted conversational response in markdown with bold highlights and bullet points>",
   "language": "${targetLang}",
   "severity": "low" | "moderate" | "emergency",
   "show_sos": true | false,
@@ -224,7 +256,7 @@ function parseLLMResponse(
 }
 
 /**
- * Offline Rule-Based Fallback Engine
+ * Offline Rule-Based Fallback Engine with Comprehensive Profile Access
  */
 function generateOfflineRAGResponse(
   query: string,
@@ -235,8 +267,107 @@ function generateOfflineRAGResponse(
 ): AIResponsePayload {
   const lower = query.toLowerCase();
   const userName = profile?.fullName ? ` ${profile.fullName}` : '';
+  const age = profile?.age || 62;
+  const bloodGroup = profile?.bloodGroup || 'B+';
+  const conditions =
+    profile?.medicalConditions && profile.medicalConditions.length > 0
+      ? profile.medicalConditions.join(', ')
+      : 'कोणतीही गंभीर व्याधी नाही (No Critical Conditions)';
+  const allergies =
+    profile?.allergies && profile.allergies.length > 0
+      ? profile.allergies.join(', ')
+      : 'कोणतीही ऍलर्जी नाही (No Known Allergies)';
+  const meds =
+    profile?.currentMedications && profile.currentMedications.length > 0
+      ? profile.currentMedications.join(', ')
+      : 'नियमित औषधे नोंदवलेली नाहीत';
+  const emergencyId = profile?.emergencyCardId || 'VK-WARI01';
 
-  // 1. Emergency
+  // 1. Direct Explicit Inquiry: Blood Group
+  if (
+    lower.includes('माझा रक्तगट') ||
+    lower.includes('माझा ब्लड') ||
+    lower.includes('my blood group') ||
+    lower.includes('mera blood group') ||
+    lower.includes('मेरा ब्लड ग्रुप') ||
+    ((lower.includes('रक्तगट') || lower.includes('blood group')) && (lower.includes('काय') || lower.includes('what') || lower.includes('कया')))
+  ) {
+    const msg =
+      targetLang === 'mr'
+        ? `राम कृष्ण हरी${userName} 🙏 आपल्या अधिकृत नोंदणीकृत प्रोफाईलनुसार आपला रक्तगट **${bloodGroup}** आहे. आपत्कालीन प्रसंगी हे आपल्या कार्ड (${emergencyId}) वर नोंदवलेले आहे.`
+        : targetLang === 'hi'
+        ? `राम कृष्ण हरी${userName} 🙏 आपके पंजीकृत प्रोफाइल के अनुसार आपका ब्लड ग्रुप **${bloodGroup}** है। यह आपके आपातकालीन कार्ड (${emergencyId}) पर भी दर्ज है।`
+        : `Ram Krishna Hari${userName} 🙏 According to your registered medical profile, your blood group is **${bloodGroup}** (Emergency Card ID: ${emergencyId}).`;
+
+    return {
+      message: msg,
+      language: targetLang,
+      severity: 'low',
+      show_sos: false,
+      requires_medical_attention: false,
+      action_type: 'none',
+    };
+  }
+
+  // 2. Direct Explicit Inquiry: Age
+  if (
+    lower.includes('माझे वय') ||
+    lower.includes('my age') ||
+    lower.includes('meri umar') ||
+    lower.includes('मेरी उम्र') ||
+    ((lower.includes('वय') || lower.includes('उम्र') || lower.includes('age')) && (lower.includes('किती') || lower.includes('काय') || lower.includes('what') || lower.includes('kitni')))
+  ) {
+    const msg =
+      targetLang === 'mr'
+        ? `राम कृष्ण हरी${userName} 🙏 आपल्या नोंदणीकृत प्रोफाईलनुसार आपले वय **${age} वर्षे** आहे. या वयात वारीच्या चालताना नियमित पाणी आणि सावलीत विश्रांती घेणे अत्यंत महत्त्वाचे आहे.`
+        : targetLang === 'hi'
+        ? `राम कृष्ण हरी${userName} 🙏 आपके रिकॉर्ड के अनुसार आपकी आयु **${age} वर्ष** है। यात्रा के दौरान समय-समय पर विश्राम और पर्याप्त जल ग्रहण करते रहें।`
+        : `Ram Krishna Hari${userName} 🙏 According to your registered profile, you are **${age} years old**. Remember to take regular rest in the shade and stay hydrated on the march.`;
+
+    return {
+      message: msg,
+      language: targetLang,
+      severity: 'low',
+      show_sos: false,
+      requires_medical_attention: false,
+      action_type: 'none',
+    };
+  }
+
+  // 3. Direct Explicit Inquiry: Personal Medical Records / Registered Medications / Health Profile
+  if (
+    lower.includes('माझी औषधे') ||
+    lower.includes('माझे आजार') ||
+    lower.includes('माझे प्रोफाईल') ||
+    lower.includes('माझे कार्ड') ||
+    lower.includes('माझी माहिती') ||
+    lower.includes('my profile') ||
+    lower.includes('my medications') ||
+    lower.includes('my conditions') ||
+    lower.includes('my health record') ||
+    lower.includes('मेरी दवाइयां') ||
+    lower.includes('मेरी बीमारी') ||
+    lower.includes('मेरा प्रोफाइल') ||
+    ((lower.includes('औषध') || lower.includes('आजार')) && (lower.includes('नोंदवले') || lower.includes('माझे कोणते') || lower.includes('registered')))
+  ) {
+    const msg =
+      targetLang === 'mr'
+        ? `राम कृष्ण हरी${userName} 🙏 आपल्या वारीरक्षक आरोग्य नोंदी खालीलप्रमाणे आहेत:\n\n• **वय**: ${age} वर्षे\n• **रक्तगट**: ${bloodGroup}\n• **नोंदणीकृत आजार**: ${conditions}\n• **चालू औषधे**: ${meds}\n• **ऍलर्जी**: ${allergies}\n• **कार्ड आयडी**: ${emergencyId}\n\nकृपया प्रवासात आपली औषधे नेहमी जवळ ठेवा आणि वेळेवर घ्या.`
+        : targetLang === 'hi'
+        ? `राम कृष्ण हरी${userName} 🙏 आपका पंजीकृत स्वास्थ्य विवरण इस प्रकार है:\n\n• **आयु**: ${age} वर्ष\n• **ब्लड ग्रुप**: ${bloodGroup}\n• **बीमारियां**: ${conditions}\n• **दवाइयां**: ${meds}\n• **एलर्जी**: ${allergies}\n• **कार्ड आईडी**: ${emergencyId}\n\nकृपया यात्रा में अपनी दवाइयां साथ रखें और समय पर सेवन करें।`
+        : `Ram Krishna Hari${userName} 🙏 Here is your registered health record:\n\n• **Age**: ${age} years old\n• **Blood Group**: ${bloodGroup}\n• **Medical Conditions**: ${conditions}\n• **Medications**: ${meds}\n• **Allergies**: ${allergies}\n• **Emergency ID**: ${emergencyId}\n\nPlease keep your medications handy and take them on time.`;
+
+    return {
+      message: msg,
+      language: targetLang,
+      severity: 'low',
+      show_sos: false,
+      requires_medical_attention: false,
+      action_type: 'none',
+    };
+  }
+
+  // 4. Emergency: Severe Chest Pain / Stroke
   if (
     lower.includes('chest') ||
     lower.includes('chhati') ||
@@ -249,10 +380,10 @@ function generateOfflineRAGResponse(
   ) {
     const msg =
       targetLang === 'mr'
-        ? `राम कृष्ण हरी${userName} 🙏 ही गंभीर आपत्कालीन परिस्थिती असू शकते. कृपया त्वरित हालचाल थांबवून विश्रांती घ्या. ताबडतोब खालील लाल SOS बटण दाबा किंवा १०८ रुग्णवाहिकेला पाचारण करा.`
+        ? `🚨 **तातडीची आपत्कालीन वैद्यकीय सूचना**:\n\n१. **ताबडतोब थांबा**: हालचाल थांबवून सुरक्षित सावलीत बसा किंवा शांत झोपा.\n२. **एसओएस बटण**: खालील लाल **SOS बटण** लगेच दाबा.\n३. **१०८ रुग्णवाहिका**: जवळच्या मदतनीसांना किंवा **१०८ रुग्णवाहिकेला** पाचारण करा.\n४. **शांत राहा**: खोल श्वास घ्या आणि आजूबाजूची गर्दी दूर करा.`
         : targetLang === 'hi'
-        ? `राम कृष्ण हरी${userName} 🙏 यह गंभीर आपातकालीन स्थिति हो सकती है। कृपया तुरंत चलना बंद कर बैठ जाएं। तुरंत नीचे दिया गया लाल SOS बटन दबाएं या १०८ एम्बुलेंस को कॉल करें।`
-        : `Ram Krishna Hari${userName} 🙏 This may require immediate medical attention. Please stop moving and sit down safely. Press the red SOS button below immediately.`;
+        ? `🚨 **आपातकालीन चिकित्सा सूचना**:\n\n१. **तुरंत रुकें**: चलना बंद कर सुरक्षित छांव में बैठ जाएं।\n२. **एसओएस बटन**: नीचे दिया गया लाल **SOS बटन** तुरंत दबाएं।\n३. **१०८ एम्बुलेंस**: नजदीकी स्वयंसेवकों को सूचित करें या **१०८** पर कॉल करें।\n४. **विश्राम**: शांत रहें और गहरी सांस लें।`
+        : `🚨 **Immediate Emergency Medical Alert**:\n\n1. **Halt Immediately**: Stop moving and sit or lie down safely in shade.\n2. **SOS Button**: Press the red **Emergency SOS button** below immediately.\n3. **Call 108**: Alert route volunteers or summon the **108 Ambulance**.\n4. **Rest**: Take slow, deep breaths.`;
 
     return {
       message: msg,
@@ -270,43 +401,49 @@ function generateOfflineRAGResponse(
     };
   }
 
-  // 2. Profile-aware chronic symptom (Dizziness / Weakness)
-  const isDiabetic = profile?.medicalConditions?.some(
-    (c) => c.toLowerCase().includes('diabet') || c.includes('मधुमेह')
-  );
-  const isHypertensive = profile?.medicalConditions?.some(
-    (c) => c.toLowerCase().includes('bp') || c.toLowerCase().includes('hypertens') || c.includes('रक्तदाब')
-  );
+  // 5. Profile-aware chronic symptom (Dizziness / Weakness)
+  const isDiabetic =
+    profile?.medicalConditions?.some(
+      (c) => c.toLowerCase().includes('diabet') || c.includes('मधुमेह')
+    ) || conditions.includes('मधुमेह');
+  const isHypertensive =
+    profile?.medicalConditions?.some(
+      (c) =>
+        c.toLowerCase().includes('bp') ||
+        c.toLowerCase().includes('hypertens') ||
+        c.includes('रक्तदाब')
+    ) || conditions.includes('रक्तदाब');
 
   if (
     lower.includes('dizzy') ||
     lower.includes('chakkar') ||
     lower.includes('चक्कर') ||
     lower.includes('shaky') ||
-    lower.includes('थरथर')
+    lower.includes('थरथर') ||
+    lower.includes('घाम')
   ) {
     let msg = '';
     if (isDiabetic) {
       msg =
         targetLang === 'mr'
-          ? `राम कृष्ण हरी${userName} 🙏 आपल्याला चक्कर किंवा थरथर जाणवत असल्यास रक्तातील साखर कमी (Hypoglycemia) असण्याची शक्यता आहे. ताबडतोब सावलीत बसा आणि गूळ, साखर किंवा फळांचा रस घ्या. विश्रांतीनंतरही बरे न वाटल्यास जवळच्या वैद्यकीय कक्षात साखर तपासून घ्या.`
+          ? `⚠️ **आरोग्य सल्ला (वय: ${age} वर्षे | मधुमेह इतिहास)**:\n\n१. **सावलीत बसा**: चक्कर किंवा घाम येणे हे रक्तातील साखर कमी (**Hypoglycemia**) झाल्याचे लक्षण असू शकते.\n२. **गूळ/साखर घ्या**: ताबडतोब **गूळ, साखर किंवा फळांचा रस** घ्या.\n३. **पाणी व विश्रांती**: थोडे-थोडे पाणी प्या आणि १०-१५ मिनिटे विश्रांती घ्या.\n४. **तपासणी**: विश्रांतीनंतरही बरे न वाटल्यास पुढील वैद्यकीय कक्षात मोफत **साखर तपासून घ्या**.`
           : targetLang === 'hi'
-          ? `राम कृष्ण हरी${userName} 🙏 चक्कर या कमजोरी शुगर कम होने का संकेत हो सकता है। तुरंत छांव में बैठें और गुड़, चीनी या फल का रस लें। आराम न मिलने पर नजदीकी मेडिकल कैंप में शुगर जांच कराएं।`
-          : `Ram Krishna Hari${userName} 🙏 Dizziness and shakiness may indicate low blood sugar. Please rest in shade immediately and consume quick-acting sugar (jaggery/juice). Consult route doctors if it persists.`;
+          ? `⚠️ **स्वास्थ्य सलाह (आयु: ${age} वर्ष | मधुमेह इतिहास)**:\n\n१. **छांव में बैठें**: चक्कर या पसीना शुगर कम (**Hypoglycemia**) होने का संकेत हो सकता है।\n२. **गुड़/चीनी लें**: तुरंत **गुड़, चीनी या फल का रस** लें।\n३. **जलपान व विश्राम**: थोड़ा पानी पिएं और १०-१५ मिनट विश्राम करें।\n४. **जांच कराएं**: राहत न मिलने पर नजदीकी मेडिकल कैंप में **शुगर जांच** कराएं।`
+          : `⚠️ **Health Guidance (Age: ${age} | Diabetes History)**:\n\n1. **Rest in Shade**: Dizziness or sweating may indicate low blood sugar (**Hypoglycemia**).\n2. **Fast-Acting Sugar**: Immediately consume **jaggery, sugar, or fruit juice**.\n3. **Hydrate**: Sip water or ORS and rest for 10-15 minutes.\n4. **Medical Check**: If symptoms persist, visit the next medical kiosk for a **free blood sugar check**.`;
     } else if (isHypertensive) {
       msg =
         targetLang === 'mr'
-          ? `राम कृष्ण हरी${userName} 🙏 चक्कर जाणवत असल्यास चालणे थांबवून शांत बसा आणि पाणी प्या. नियमित बीपीची औषधे घेतली आहेत का ते तपासा. प्रत्येक थांब्यावर मोबाईल क्लिनिकमध्ये मोफत बीपी तपासणी उपलब्ध आहे.`
+          ? `⚠️ **आरोग्य सल्ला (वय: ${age} वर्षे | उच्च रक्तदाब इतिहास)**:\n\n१. **शांत बसा**: चालणे थांबवून लगेच सावलीत बसा आणि शांत राहा.\n२. **नियमित औषधे**: नियमित **बीपीची औषधे (${meds})** वेळेवर घेतली आहेत का ते तपासा.\n३. **हायड्रेशन**: थोडे-थोडे पाणी किंवा ओआरएस पीत राहा.\n४. **बीपी तपासणी**: प्रत्येक थांब्यावरील फिरत्या क्लिनिकमध्ये मोफत **बीपी तपासणी** उपलब्ध आहे.`
           : targetLang === 'hi'
-          ? `राम कृष्ण हरी${userName} 🙏 चक्कर आने पर तुरंत बैठें और पानी पिएं। अपनी नियमित बीपी की दवा समय पर लें और मार्ग के मेडिकल कैंप में बीपी जांच कराएं।`
-          : `Ram Krishna Hari${userName} 🙏 Please rest in shade and hydrate. Check if you have taken your BP medication, and get your blood pressure checked at the nearest route medical unit.`;
+          ? `⚠️ **स्वास्थ्य सलाह (आयु: ${age} वर्ष | उच्च रक्तचाप इतिहास)**:\n\n१. **शांति से बैठें**: तुरंत चलना बंद कर छांव में बैठें।\n२. **दवा जांचें**: अपनी नियमित **बीपी की दवा (${meds})** समय पर ली है या नहीं जांचें।\n३. **हाइड्रेशन**: थोड़ा-थोड़ा पानी या ओआरएस पिएं।\n४. **बीपी जांच**: मार्ग के मोबाइल क्लिनिक में निःशुल्क **बीपी जांच** कराएं।`
+          : `⚠️ **Health Guidance (Age: ${age} | Hypertension History)**:\n\n1. **Rest in Shade**: Stop walking and sit down comfortably in shade.\n2. **Medication Check**: Ensure you have taken your prescribed **BP medication (${meds})**.\n3. **Hydration**: Sip water or ORS steadily.\n4. **BP Check**: Free **blood pressure checks** are available at all route mobile medical units.`;
     } else {
       msg =
         targetLang === 'mr'
-          ? `राम कृष्ण हरी${userName} 🙏 चक्कर किंवा थकवा जाणवल्यास सावलीत बसा, ओआरएस किंवा लिंबू पाणी प्या आणि १० मिनिटे विश्रांती घ्या. त्रास कायम राहिल्यास वैद्यकीय मदत केंद्रात संपर्क करा.`
+          ? `राम कृष्ण हरी${userName} 🙏 चक्कर किंवा थकवा जाणवल्यास:\n\n१. **सावलीत विश्रांती**: चालणे थांबवून १० मिनिटे सावलीत बसा.\n२. **ओआरएस/पाणी**: ओआरएस किंवा लिंबू पाणी प्या.\n३. **मदत केंद्र**: त्रास कायम राहिल्यास पुढील वैद्यकीय मदत केंद्रात संपर्क करा.`
           : targetLang === 'hi'
-          ? `राम कृष्ण हरी${userName} 🙏 चक्कर आने पर छांव में बैठें, ओआरएस या पानी पिएं और विश्राम करें। आराम न मिलने पर डॉक्टर को दिखाएं।`
-          : `Ram Krishna Hari${userName} 🙏 Please rest in the shade, drink some ORS/water, and relax for a few minutes.`;
+          ? `राम कृष्ण हरी${userName} 🙏 चक्कर या कमजोरी महसूस होने पर:\n\n१. **छांव में विश्राम**: चलना बंद कर १० मिनट विश्राम करें।\n२. **ओआरएस/जल**: ओआरएस या नींबू पानी पिएं।\n३. **चिकित्सा केंद्र**: आराम न मिलने पर नजदीकी चिकित्सा केंद्र जाएं।`
+          : `Ram Krishna Hari${userName} 🙏 If feeling dizzy or fatigued:\n\n1. **Rest in Shade**: Take a 10-minute seated break in the shade.\n2. **Hydrate**: Drink ORS or lemon water.\n3. **Medical Unit**: Visit the next route medical post if symptoms continue.`;
     }
 
     return {
@@ -319,7 +456,34 @@ function generateOfflineRAGResponse(
     };
   }
 
-  // 3. Blisters / Foot Soreness
+  // 6. Health Precautions / Diet Advice
+  if (
+    lower.includes('काळजी') ||
+    lower.includes('सल्ला') ||
+    lower.includes('उपाय') ||
+    lower.includes('precaution') ||
+    lower.includes('diet') ||
+    lower.includes('advice') ||
+    lower.includes('खावे')
+  ) {
+    const msg =
+      targetLang === 'mr'
+        ? `राम कृष्ण हरी${userName} 🙏 आपल्या वयाच्या (**${age} वर्षे**) आणि आरोग्याच्या नोंदीनुसार (**${conditions}**) वारीतील महत्त्वाच्या टिप्स:\n\n१. **वेळेवर औषधे**: आपली नियमित औषधे (**${meds}**) वेळेवर घ्या.\n२. **पाणी व ओआरएस**: दर तासाला किमान **२०० मिली पाणी किंवा ओआरएस** प्या.\n३. **उपवास टाळा**: रक्तातील साखर व ऊर्जा नियंत्रित ठेवण्यासाठी दीर्घकाळ उपाशी राहू नका; **फळे व सुकामेवा** सोबत ठेवा.\n४. **सावलीत विश्रांती**: दुपारच्या कडक उन्हात सावलीत नियमित विश्रांती घ्या.`
+        : targetLang === 'hi'
+        ? `राम कृष्ण हरी${userName} 🙏 आपकी आयु (**${age} वर्ष**) और स्वास्थ्य स्थिति (**${conditions}**) के अनुसार मुख्य सावधानियां:\n\n१. **समय पर दवा**: अपनी नियमित दवाइयां (**${meds}**) समय पर लें।\n२. **हाइड्रेशन**: हर घंटे कम से कम **२०० मिली पानी या ओआरएस** पीते रहें।\n३. **आहार**: ज्यादा देर भूखे न रहें; **फल या हल्का नाश्ता** साथ रखें।\n४. **विश्राम**: दोपहर की धूप के समय छांव में विश्राम करें।`
+        : `Ram Krishna Hari${userName} 🙏 Based on your age (**${age}**) and health profile (**${conditions}**), here are key precautions:\n\n1. **Timely Medications**: Take your prescribed medications (**${meds}**) on time.\n2. **Hydration**: Drink at least **200 ml of water or ORS** every hour.\n3. **Diet**: Avoid prolonged fasting; keep **fruits/nuts** handy to maintain energy.\n4. **Rest**: Take short breaks in the shade during peak afternoon heat.`;
+
+    return {
+      message: msg,
+      language: targetLang,
+      severity: 'low',
+      show_sos: false,
+      requires_medical_attention: false,
+      action_type: 'none',
+    };
+  }
+
+  // 7. Blisters / Foot Soreness
   if (
     lower.includes('blister') ||
     lower.includes('foot') ||
@@ -330,10 +494,10 @@ function generateOfflineRAGResponse(
   ) {
     const msg =
       targetLang === 'mr'
-        ? `राम कृष्ण हरी${userName} 🙏 चालल्यामुळे पाय दुखत असल्यास सावलीत विश्रांती घ्या, पाय किंचित वर ठेवा आणि ओआरएस प्या. पायात फोड असल्यास तो फोडू नका; मुक्कामावरील वैद्यकीय केंद्रात मोफत मलम व पट्टी उपलब्ध आहे.`
+        ? `🩹 **पायाची काळजी व प्रथमोपचार**:\n\n१. **सावलीत विश्रांती**: चालणे थांबवून सावलीत बसा आणि **पाय थोडे उंचावर** ठेवा.\n२. **फोड फोडू नका**: पायातील फोड अजिबात फोडू नका, यामुळे संसर्ग होऊ शकतो.\n३. **ओआरएस/पाणी**: डिहायड्रेशन टाळण्यासाठी पुरेसे पाणी प्या.\n४. **मोफत मलमपट्टी**: मुक्कामावरील वैद्यकीय कक्षात **मोफत मलम व पट्टी** उपलब्ध आहे.`
         : targetLang === 'hi'
-        ? `राम कृष्ण हरी${userName} 🙏 लगातार चलने से पैर दुख रहे हों तो विश्राम करें और पैर थोड़ा ऊपर रखें। पैरों के छाले न फोड़ें; पड़ाव पर मेडिकल कैंप से निःशुल्क मरहम व पट्टी लें।`
-        : `Ram Krishna Hari${userName} 🙏 Rest your feet in the shade, elevate them slightly, and drink water. Do not pop blisters; antiseptic care is available at route medical booths.`;
+        ? `🩹 **पैरों की देखभाल और प्राथमिक उपचार**:\n\n१. **छांव में विश्राम**: चलना बंद कर बैठें और **पैर थोड़ा ऊपर** रखें।\n२. **छाले न फोड़ें**: पैरों के छाले बिल्कुल न फोड़ें, इससे संक्रमण हो सकता है।\n३. **हाइड्रेशन**: पर्याप्त पानी और ओआरएस पिएं।\n४. **मुफ्त मरहम-पट्टी**: पड़ाव के मेडिकल कैंप से **निःशुल्क मरहम व पट्टी** लें।`
+        : `🩹 **Foot Care & Blister First Aid**:\n\n1. **Rest & Elevate**: Rest your feet in the shade and **elevate them slightly**.\n2. **Do Not Pop Blisters**: Never pop blisters as it risks skin infection.\n3. **Hydrate**: Drink plenty of water or ORS.\n4. **Free Antiseptic Care**: Visit the route medical kiosk for **free ointment and dressing**.`;
 
     return {
       message: msg,
@@ -345,14 +509,14 @@ function generateOfflineRAGResponse(
     };
   }
 
-  // 4. Water / Logistics
+  // 8. Water / Logistics
   if (lower.includes('water') || lower.includes('pani') || lower.includes('पाणी') || lower.includes('पानी')) {
     const msg =
       targetLang === 'mr'
-        ? `राम कृष्ण हरी${userName} 🙏 पुढील १.५ किमी अंतरावर शुद्ध पिण्याचे पाणी आणि ओआरएस वाटप केंद्र सज्ज आहे. दर तासाला पाणी पीत राहा.`
+        ? `💧 **पिण्याचे पाणी व ओआरएस वाटप केंद्र**:\n\n• **पुढील केंद्र**: पुढील **१.५ किमी** अंतरावर शुद्ध पिण्याचे पाणी आणि ओआरएस वाटप सज्ज आहे.\n• **हायड्रेशन**: दर तासाला किमान **२०० मिली** पाणी पीत राहा.\n• **सोय**: पाणी केंद्राजवळ सावली व बसण्याची उत्तम सोय आहे.`
         : targetLang === 'hi'
-        ? `राम कृष्ण हरी${userName} 🙏 अगले १.५ किमी पर शुद्ध पेयजल और ओआरएस केंद्र उपलब्ध है। नियमित रूप से पानी पीते रहें।`
-        : `Ram Krishna Hari${userName} 🙏 Pure drinking water and ORS kiosks are located every 1-2 km along the march. Stay hydrated!`;
+        ? `💧 **पेयजल और ओआरएस वितरण केंद्र**:\n\n• **अगला केंद्र**: अगले **१.५ किमी** पर शुद्ध पेयजल और ओआरएस केंद्र उपलब्ध है।\n• **हाइड्रेशन**: नियमित रूप से हर घंटे **२०० मिली** पानी पीते रहें।\n• **सुविधा**: केंद्र के पास छांव व बैठने की सुविधा उपलब्ध है।`
+        : `💧 **Drinking Water & ORS Kiosks**:\n\n• **Next Kiosk**: Pure drinking water and ORS stations are located **1.5 km ahead**.\n• **Hydration**: Drink at least **200 ml of water** every hour.\n• **Facilities**: Shade and seating areas are available at each station.`;
 
     return {
       message: msg,
@@ -364,7 +528,7 @@ function generateOfflineRAGResponse(
     };
   }
 
-  // 5. Leader Contact
+  // 9. Leader Contact
   if (
     lower.includes('leader') ||
     lower.includes('प्रमुख') ||
@@ -377,10 +541,10 @@ function generateOfflineRAGResponse(
     const leaderName = profile?.dindiLeaderName || 'ह.भ.प. सोपानराव महाराज';
     const msg =
       targetLang === 'mr'
-        ? `राम कृष्ण हरी${userName} 🙏 आपले दिंडी प्रमुख ${leaderName} यांच्याशी थेट संपर्क साधण्यासाठी खालील बटण दाबा.`
+        ? `🚩 **दिंडी प्रमुख संपर्क माहिती**:\n\n• **दिंडी प्रमुख**: **${leaderName}**\n• **दिंडी नाव**: **${profile?.dindiName || 'संत पालखी दिंडी'}** (#${profile?.dindiNumber || '12'})\n\nथेट संपर्क साधण्यासाठी खालील **कॉल बटण** दाबा.`
         : targetLang === 'hi'
-        ? `राम कृष्ण हरी${userName} 🙏 अपने दिंडी प्रमुख ${leaderName} से सीधे संपर्क के लिए नीचे दिया गया बटन दबाएं।`
-        : `Ram Krishna Hari${userName} 🙏 To contact your Dindi Leader (${leaderName}), tap the button below.`;
+        ? `🚩 **दिंडी प्रमुख संपर्क जानकारी**:\n\n• **दिंडी प्रमुख**: **${leaderName}**\n• **दिंडी नाम**: **${profile?.dindiName || 'संत पालकी दिंडी'}** (#${profile?.dindiNumber || '12'})\n\nसीधे संपर्क के लिए नीचे दिया गया **कॉल बटन** दबाएं।`
+        : `🚩 **Dindi Leader Contact**:\n\n• **Leader**: **${leaderName}**\n• **Dindi**: **${profile?.dindiName || 'Sant Palkhi Dindi'}** (#${profile?.dindiNumber || '12'})\n\nTap the button below to call directly.`;
 
     return {
       message: msg,
@@ -398,13 +562,13 @@ function generateOfflineRAGResponse(
     };
   }
 
-  // Default response
+  // Default response (Helpful wari greeting without unsolicited profile dumps)
   const defaultMsg =
     targetLang === 'mr'
-      ? `राम कृष्ण हरी${userName} 🙏 मी आपल्या सेवेसाठी तत्पर आहे. पाणी, अन्नछत्र, पालखी मार्ग, विश्रांती किंवा आरोग्याबाबत काहीही विचारा.`
+      ? `राम कृष्ण हरी${userName} 🙏 मी आपल्या सेवेसाठी सदैव तत्पर आहे.\n\nआपण पाणी, अन्नछत्र, पालखी मार्ग, विश्रांती थांबे किंवा आरोग्याबाबत काहीही विचारू शकता.`
       : targetLang === 'hi'
-      ? `राम कृष्ण हरी${userName} 🙏 मैं आपकी सेवा में उपस्थित हूँ। जल, अन्नछत्र, पालकी मार्ग अथवा स्वास्थ्य संबंधी किसी भी प्रश्न के लिए पूछें।`
-      : `Ram Krishna Hari${userName} 🙏 I am here to help. Feel free to ask about water, meals, resting points, route status, or health assistance.`;
+      ? `राम कृष्ण हरी${userName} 🙏 मैं आपकी सेवा में उपस्थित हूँ।\n\nआप जल, अन्नछत्र, पालकी मार्ग, विश्राम स्थल अथवा स्वास्थ्य संबंधी किसी भी प्रश्न के लिए पूछ सकते हैं।`
+      : `Ram Krishna Hari${userName} 🙏 I am here to help.\n\nFeel free to ask about water kiosks, meals, resting camps, route directions, or health assistance.`;
 
   return {
     message: defaultMsg,
@@ -429,9 +593,22 @@ export async function askPersonalizedRAG(
   const targetLang: ChatLanguage =
     explicitLang || getUserLanguagePreference() || 'mr';
 
-  // 1. Strict User Context Isolation
-  const activeProfile =
+  // 1. Strict Dynamic User Context from Supabase Database
+  let activeProfile =
     overrideProfile !== undefined ? overrideProfile : getUserProfile();
+
+  if (!activeProfile && overrideProfile === undefined) {
+    try {
+      const dbProfile = await fetchCurrentUserProfile();
+      if (dbProfile) {
+        activeProfile = dbProfile;
+        setUserProfile(dbProfile);
+      }
+    } catch (e) {
+      console.warn('[ragChatService] Supabase profile fetch failed:', e);
+    }
+  }
+
   const profileContext = getUserAIContext(activeProfile);
 
   // 2. Retrieve Top Global Knowledge Chunks

@@ -100,53 +100,57 @@ export const clearUserSession = () => {
 
 /**
  * Builds clean, secure, privacy-isolated medical and profile context for the active user.
- * Strictly scopes data to the currently logged in user profile.
+ * Strictly scopes data to the currently authenticated user profile retrieved from Supabase database.
  */
 export const getUserAIContext = (profile: UserProfile | null = currentUserProfile): string => {
   if (!profile) {
-    return '[User Context: Anonymous Pilgrim, No medical conditions on record]';
+    return '[User: Guest Pilgrim - No authenticated user record currently loaded from Supabase database]';
   }
 
-  const parts: string[] = [];
-  parts.push(`Name: ${profile.fullName || 'Varkari Pilgrim'}`);
-  if (profile.age) parts.push(`Age: ${profile.age}`);
-  if (profile.gender) parts.push(`Gender: ${profile.gender}`);
-  if (profile.bloodGroup) parts.push(`Blood Group: ${profile.bloodGroup}`);
-  if (profile.role) parts.push(`Role in Wari: ${profile.role}`);
-  if (profile.dindiName) parts.push(`Dindi: ${profile.dindiName} (#${profile.dindiNumber || '12'})`);
-  if (profile.dindiLeaderName) parts.push(`Dindi Leader: ${profile.dindiLeaderName}`);
-  if (profile.village) parts.push(`Home Village/District: ${profile.village}`);
+  const p = profile;
 
   const conditions =
-    profile.medicalConditions && profile.medicalConditions.length > 0
-      ? profile.medicalConditions.filter((c) => c && c.toLowerCase() !== 'none').join(', ')
-      : 'None reported';
-  parts.push(`Known Medical Conditions: ${conditions}`);
+    p.medicalConditions && p.medicalConditions.length > 0
+      ? p.medicalConditions.filter((c) => c && c.toLowerCase() !== 'none').join(', ')
+      : 'None reported (कोणतीही गंभीर व्याधी नाही)';
 
   const allergies =
-    profile.allergies && profile.allergies.length > 0
-      ? profile.allergies.filter((a) => a && a.toLowerCase() !== 'none').join(', ')
-      : 'None reported';
-  parts.push(`Allergies: ${allergies}`);
+    p.allergies && p.allergies.length > 0
+      ? p.allergies.filter((a) => a && a.toLowerCase() !== 'none').join(', ')
+      : 'None reported (कोणतीही ऍलर्जी नाही)';
 
   const meds =
-    profile.currentMedications && profile.currentMedications.length > 0
-      ? profile.currentMedications.filter((m) => m && m.toLowerCase() !== 'none').join(', ')
+    p.currentMedications && p.currentMedications.length > 0
+      ? p.currentMedications.filter((m) => m && m.toLowerCase() !== 'none').join(', ')
       : 'None reported';
-  parts.push(`Current Medications: ${meds}`);
 
-  if (profile.criticalNotes) {
-    parts.push(`Critical Notes: ${profile.criticalNotes}`);
+  const parts: string[] = [
+    `• Full Name: ${p.fullName || 'Varkari Pilgrim'}`,
+    `• Age: ${p.age !== undefined && p.age !== null ? `${p.age} years old` : 'Not specified in database'}`,
+    `• Gender: ${p.gender || 'Not specified'}`,
+    `• Blood Group: ${p.bloodGroup || 'Not specified in database'}`,
+    `• Role in Wari: ${p.role || 'varkari'}`,
+    `• Dindi Name & Number: ${p.dindiName || 'Sant Palkhi Dindi'} (#${p.dindiNumber || '12'})`,
+    `• Dindi Leader: ${p.dindiLeaderName || 'ह.भ.प. सोपानराव महाराज'}`,
+    `• Home Village/City: ${p.village || 'Maharashtra'}`,
+    `• Emergency Card ID: ${p.emergencyCardId || 'Not registered'}`,
+    `• Chronic Medical Conditions: ${conditions}`,
+    `• Known Allergies: ${allergies}`,
+    `• Current Medications: ${meds}`,
+  ];
+
+  if (p.criticalNotes) {
+    parts.push(`• Critical Health Notes: ${p.criticalNotes}`);
   }
 
-  if (profile.emergencyContacts && profile.emergencyContacts.length > 0) {
-    const contactsStr = profile.emergencyContacts
+  if (p.emergencyContacts && p.emergencyContacts.length > 0) {
+    const contactsStr = p.emergencyContacts
       .map((c) => `${c.name} (${c.relationship || 'Contact'}: ${c.phoneNumber})`)
       .join('; ');
-    parts.push(`Emergency Contacts: ${contactsStr}`);
+    parts.push(`• Registered Emergency Contacts: ${contactsStr}`);
   }
 
-  return `[CONFIDENTIAL ACTIVE USER PROFILE]\n${parts.join('\n')}`;
+  return `[CONFIDENTIAL SUPABASE AUTHENTICATED USER RECORD]\n${parts.join('\n')}`;
 };
 
 export const subscribeUserRole = (listener: (role: UserRole) => void) => {
