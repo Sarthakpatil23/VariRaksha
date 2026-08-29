@@ -28,12 +28,12 @@ import {
   resolveEmergencyAlert,
   subscribeToEmergencyAlerts,
   createAlertFromBlePacket,
+  convertOfflineItemToAlert,
   EmergencyAlert,
   calculateDynamicPriority,
   prioritizeEmergencyAlerts,
 } from '../../services/alertService';
 import { bleMeshManager } from '../../services/bleMeshManager';
-import { BleMeshStatusBanner } from '../../components/sos/BleMeshStatusBanner';
 import { BleSosPacket, estimateDistanceFromRssi } from '../../services/bleMeshPacket';
 
 export const VolunteerDashboardScreen: React.FC<
@@ -68,8 +68,7 @@ export const VolunteerDashboardScreen: React.FC<
     const matchesName = Boolean(
       item.responder_name &&
         currentVolunteer.name &&
-        item.responder_name.trim().toLowerCase() === currentVolunteer.name.trim().toLowerCase() &&
-        currentVolunteer.name.toLowerCase() !== 'volunteer',
+        item.responder_name.trim().toLowerCase() === currentVolunteer.name.trim().toLowerCase(),
     );
     return matchesId || matchesName;
   };
@@ -156,33 +155,48 @@ export const VolunteerDashboardScreen: React.FC<
 
         setLastBleReceived({ name: packet.pilgrimName, distance: dist });
 
-        // Upload to Supabase (gateway bridge)
+        // Upload to Supabase (gateway bridge if online)
         const { alert: uploadedAlert, error } = await createAlertFromBlePacket(packet);
 
-        if (uploadedAlert) {
-          // Add to local alerts list (it will also come via Supabase Realtime)
-          setAlerts((prev) => {
-            const exists = prev.some((a) => a.id === uploadedAlert.id);
-            if (exists) return prev;
-            return prioritizeEmergencyAlerts([uploadedAlert, ...prev]);
-          });
-        }
+        // Always construct a valid EmergencyAlert (whether uploaded to cloud or stored offline)
+        const activeAlert = uploadedAlert || convertOfflineItemToAlert({
+          msg_id: packet.msgId,
+          card_id: packet.cardId,
+          pilgrim_name: packet.pilgrimName,
+          pilgrim_phone: packet.pilgrimPhone,
+          problem_type: packet.problemType,
+          latitude: packet.latitude,
+          longitude: packet.longitude,
+          severity: packet.severity,
+          medical_context: packet.medicalContext,
+          age: packet.age,
+          blood_group: packet.bloodGroup,
+          dindi_name: packet.dindiName,
+          timestamp: packet.timestamp,
+        });
+
+        // Add to local alerts list immediately
+        setAlerts((prev) => {
+          const exists = prev.some((a) => a.id === activeAlert.id || (a.emergency_card_id === activeAlert.emergency_card_id && a.status === 'nearby'));
+          if (exists) return prev;
+          return prioritizeEmergencyAlerts([activeAlert, ...prev]);
+        });
 
         Alert.alert(
-          '🚨 OFFLINE SOS VIA BLUETOOTH',
+          '🚨 OFFLINE EMERGENCY SOS',
           `Pilgrim: ${packet.pilgrimName}\n` +
           `Problem: ${packet.problemType}\n` +
           `Blood Group: ${packet.bloodGroup}\n` +
           `Location: ${packet.latitude.toFixed(4)}, ${packet.longitude.toFixed(4)}\n` +
           `Distance: ${dist}\n\n` +
           (error
-            ? `⚠️ Cloud upload failed: ${error}`
-            : '✅ Alert uploaded to cloud dashboard.'),
+            ? `⚠️ Offline Emergency Relay`
+            : '✅ Alert synced to emergency network.'),
           [
             {
               text: 'Respond Now',
               onPress: () => {
-                if (uploadedAlert) handleRespond(uploadedAlert);
+                handleRespond(activeAlert);
               },
             },
             { text: 'Dismiss', style: 'cancel' },
@@ -540,18 +554,6 @@ export const VolunteerDashboardScreen: React.FC<
             </Text>
           </TouchableOpacity>
         </View>
-
-        {/* BLE MESH SCANNING STATUS BANNER */}
-        {isBleScanning && !lastBleReceived && (
-          <BleMeshStatusBanner mode="scanning" />
-        )}
-        {lastBleReceived && (
-          <BleMeshStatusBanner
-            mode="received"
-            pilgrimName={lastBleReceived.name}
-            distance={lastBleReceived.distance}
-          />
-        )}
 
         {/* 🚨 ACTIVE EMERGENCY DISPATCH CARD (ONLY VISIBLE FOR THE VOLUNTEER WHO CLAIMED IT) */}
         {myClaimedAlert && myClaimedMapRoute && (

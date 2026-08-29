@@ -274,3 +274,79 @@ export function getDistanceAndBearing(
 
   return { distanceMeters, bearingDegrees, compassDirection };
 }
+
+// ─────────── Cross-Platform Base64 Utilities (Hermes / Native / Web Safe) ───────────
+
+const B64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
+
+/**
+ * Pure JavaScript Base64 encoder (works on Hermes without Buffer or window.btoa)
+ */
+export function base64Encode(input: string): string {
+  if (!input) return '';
+  let output = '';
+  let chr1: number, chr2: number, chr3: number;
+  let enc1: number, enc2: number, enc3: number, enc4: number;
+  let i = 0;
+
+  const utf8 = unescape(encodeURIComponent(input));
+
+  while (i < utf8.length) {
+    chr1 = utf8.charCodeAt(i++);
+    chr2 = utf8.charCodeAt(i++);
+    chr3 = utf8.charCodeAt(i++);
+
+    enc1 = chr1 >> 2;
+    enc2 = ((chr1 & 3) << 4) | (chr2 >> 4);
+    enc3 = isNaN(chr2) ? 64 : (((chr2 & 15) << 2) | (chr3 >> 6));
+    enc4 = isNaN(chr2) || isNaN(chr3) ? 64 : chr3 & 63;
+
+    output +=
+      B64_CHARS.charAt(enc1) +
+      B64_CHARS.charAt(enc2) +
+      B64_CHARS.charAt(enc3) +
+      B64_CHARS.charAt(enc4);
+  }
+
+  return output;
+}
+
+/**
+ * Pure JavaScript Base64 decoder (works on Hermes without Buffer or window.atob)
+ */
+export function base64Decode(input: string): string {
+  if (!input) return '';
+  const cleanInput = input.replace(/[^A-Za-z0-9+/=]/g, '');
+  let output = '';
+  let enc1: number, enc2: number, enc3: number, enc4: number;
+  let chr1: number, chr2: number, chr3: number;
+  let i = 0;
+
+  while (i < cleanInput.length) {
+    enc1 = B64_CHARS.indexOf(cleanInput.charAt(i++));
+    enc2 = B64_CHARS.indexOf(cleanInput.charAt(i++));
+    enc3 = B64_CHARS.indexOf(cleanInput.charAt(i++));
+    enc4 = B64_CHARS.indexOf(cleanInput.charAt(i++));
+
+    if (enc1 === -1 || enc2 === -1) break;
+
+    chr1 = (enc1 << 2) | (enc2 >> 4);
+    chr2 = ((enc2 & 15) << 4) | (enc3 >> 2);
+    chr3 = ((enc3 & 3) << 6) | enc4;
+
+    output += String.fromCharCode(chr1);
+    if (enc3 !== 64 && enc3 !== -1 && !isNaN(chr2)) {
+      output += String.fromCharCode(chr2);
+    }
+    if (enc4 !== 64 && enc4 !== -1 && !isNaN(chr3)) {
+      output += String.fromCharCode(chr3);
+    }
+  }
+
+  try {
+    return decodeURIComponent(escape(output));
+  } catch {
+    return output;
+  }
+}
+

@@ -25,7 +25,20 @@
         "BLUETOOTH_ADMIN",
         "BLUETOOTH_SCAN",
         "BLUETOOTH_CONNECT",
-        "BLUETOOTH_ADVERTISE"
+        "BLUETOOTH_ADVERTISE",
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH_CONNECT",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "BLUETOOTH",
+        "BLUETOOTH_ADMIN",
+        "BLUETOOTH_SCAN",
+        "BLUETOOTH_CONNECT",
+        "BLUETOOTH_ADVERTISE",
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH_CONNECT"
       ]
     },
     "web": {
@@ -44,6 +57,17 @@
           "bluetoothAlwaysPermission": "VariRaksha uses Bluetooth to relay emergency SOS signals to nearby volunteers when internet is unavailable."
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "2d36ff3c-d8e4-47be-83d2-fd8c3dd06efc"
+      }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/2d36ff3c-d8e4-47be-83d2-fd8c3dd06efc"
+    }
   }
 }

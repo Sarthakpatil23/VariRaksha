@@ -15,8 +15,9 @@ import {
   generateMessageId,
   problemTypeToCode,
   encodeSosPacket,
+  decodeSosPacket,
 } from './bleMeshPacket';
-import { insertOfflineSos } from '../lib/sqlite';
+import { insertOfflineSos, getPendingOfflineSos, markSosSynced } from '../lib/sqlite';
 
 export {
   calculateDynamicPriority,
@@ -99,8 +100,22 @@ export interface SOSCreationPayload {
 // In-memory / Offline pending queue for resilient offline behavior
 let pendingOfflineQueue: EmergencyAlert[] = [];
 
+type OfflineSyncCallback = (offlineId: string, supabaseAlert: EmergencyAlert) => void;
+const offlineSyncListeners: Set<OfflineSyncCallback> = new Set();
+
+/**
+ * Register a listener for when offline alerts are successfully synced to Supabase
+ */
+export function onOfflineAlertSynced(callback: OfflineSyncCallback): () => void {
+  offlineSyncListeners.add(callback);
+  return () => {
+    offlineSyncListeners.delete(callback);
+  };
+}
+
 /**
  * Capture current location with graceful fallback to Wari coordinates
+ * Uses strict 3.5s timeout promise race to prevent hanging when GPS is slow
  */
 export async function captureCurrentLocation(): Promise<{
   latitude: number;
@@ -117,12 +132,15 @@ export async function captureCurrentLocation(): Promise<{
   };
 
   try {
-    // 1. Try native Expo Location API
-    const perm = await Location.getForegroundPermissionsAsync();
-    if (perm.granted) {
-      const position = await Location.getCurrentPositionAsync({
+    // 1. Try native Expo Location API with strict 3.5s timeout promise race
+    const perm = await Location.getForegroundPermissionsAsync().catch(() => ({ granted: false } as any));
+    if (perm && perm.granted) {
+      const positionPromise = Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.Balanced,
       });
+
+      const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 3500));
+      const position: any = await Promise.race([positionPromise, timeoutPromise]);
 
       if (position?.coords) {
         return {
@@ -138,21 +156,23 @@ export async function captureCurrentLocation(): Promise<{
   }
 
   try {
-    // 2. Web Geolocation API fallback
+    // 2. Web Geolocation API fallback with 2.5s timeout
     if (typeof navigator !== 'undefined' && navigator.geolocation) {
       const position = await new Promise<GeolocationPosition>((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(resolve, reject, {
-          timeout: 4000,
-          enableHighAccuracy: true,
+          timeout: 2500,
+          enableHighAccuracy: false,
         });
       });
 
-      return {
-        latitude: position.coords.latitude,
-        longitude: position.coords.longitude,
-        locationName: 'Wakhari Sector (Live GPS)',
-        isFallback: false,
-      };
+      if (position?.coords) {
+        return {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          locationName: 'Wakhari Sector (Live GPS)',
+          isFallback: false,
+        };
+      }
     }
   } catch (err) {
     console.log('[AlertService] Location unavailable, using Wari corridor coordinates:', err);
@@ -160,6 +180,7 @@ export async function captureCurrentLocation(): Promise<{
 
   return defaultLocation;
 }
+
 
 /**
  * Create a new Emergency SOS Incident in Supabase
@@ -348,46 +369,195 @@ export async function createEmergencySOS(
 }
 
 /**
- * Fetch emergency alerts from Supabase dynamically prioritized
+ * Helper: Convert a SQLite/offline SOS queue item to an EmergencyAlert
+ */
+export function convertOfflineItemToAlert(item: any): EmergencyAlert {
+  let decoded: BleSosPacket | null = null;
+  if (item.payload_json) {
+    decoded = decodeSosPacket(item.payload_json);
+  }
+
+  const problemType = item.problem_type || decoded?.problemType || 'Medical emergency';
+  const severity = (item.severity || decoded?.severity || 'critical') as AlertSeverity;
+  const pilgrimAge = item.age || decoded?.age || 62;
+  const medicalContext = item.medical_context || decoded?.medicalContext || 'Offline BLE SOS';
+  const createdAt = item.created_at || (item.timestamp ? new Date(item.timestamp * 1000).toISOString() : new Date().toISOString());
+
+  const priorityBreakdown = calculateDynamicPriority({
+    severity,
+    problem_type: problemType,
+    description: `Offline BLE SOS | Blood: ${item.blood_group || decoded?.bloodGroup || 'Unknown'}`,
+    notes: `Offline BLE SOS Relay`,
+    pilgrim_age: pilgrimAge,
+    medical_context: medicalContext,
+    created_at: createdAt,
+    status: 'nearby',
+  });
+
+  const rawMsgId = item.msg_id || decoded?.msgId || `off-${Date.now()}`;
+  const alertId = rawMsgId.startsWith('offline-') ? rawMsgId : `offline-${rawMsgId}`;
+
+  return {
+    id: alertId,
+    pilgrim_name: item.pilgrim_name || decoded?.pilgrimName || 'Varkari Pilgrim',
+    pilgrim_phone: item.pilgrim_phone || decoded?.pilgrimPhone || '+91 99708 32199',
+    pilgrim_age: pilgrimAge,
+    pilgrim_gender: item.pilgrim_gender || 'Male',
+    emergency_card_id: item.card_id || decoded?.cardId || 'VK-BLE01',
+    dindi_name: item.dindi_name || decoded?.dindiName || 'Sant Dindi #01',
+    problem_type: problemType,
+    emergency_type: problemType,
+    description: `[Offline SOS via BLE Mesh] Relay beacon active`,
+    notes: `[Offline SOS via BLE Mesh] MsgID: ${rawMsgId}`,
+    medical_context: medicalContext,
+    severity,
+    status: 'nearby' as AlertStatus,
+    distance_away: '📡 Offline BLE Relay',
+    location_name: 'Palkhi Route (Offline GPS)',
+    latitude: item.latitude || decoded?.latitude || 17.7120,
+    longitude: item.longitude || decoded?.longitude || 75.2410,
+    priority_level: priorityBreakdown.priorityLevel,
+    priority_score: priorityBreakdown.rawScore,
+    effective_priority_score: priorityBreakdown.effectiveScore,
+    priority_explanation: priorityBreakdown.explanation,
+    priority_factors: priorityBreakdown,
+    priorityData: priorityBreakdown,
+    created_at: createdAt,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+/**
+ * Fetch emergency alerts from Supabase, seamlessly merged with local offline SQLite queue
  */
 export async function fetchEmergencyAlerts(): Promise<{
   alerts: EmergencyAlert[];
   error: string | null;
 }> {
+  let onlineAlerts: EmergencyAlert[] = [];
+  let fetchError: string | null = null;
+
   try {
     // 1. Try PostgreSQL RPC with real-time response priority scoring
     const { data: rpcData, error: rpcError } = await supabase.rpc('get_prioritized_emergency_alerts');
 
     if (!rpcError && rpcData && Array.isArray(rpcData)) {
-      const enriched: EmergencyAlert[] = rpcData.map((item: any) => ({
+      onlineAlerts = rpcData.map((item: any) => ({
         ...item,
         priorityData: calculateDynamicPriority(item),
       }));
-      return { alerts: enriched, error: null };
+    } else {
+      if (rpcError) {
+        console.warn('[AlertService] RPC error, falling back to direct table select:', rpcError.message);
+      }
+
+      // 2. Direct table select fallback
+      const { data, error } = await supabase
+        .from('emergency_alerts')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (!error && data) {
+        onlineAlerts = data as EmergencyAlert[];
+      } else if (error) {
+        fetchError = error.message;
+      }
     }
-
-    if (rpcError) {
-      console.warn('[AlertService] RPC get_prioritized_emergency_alerts error, falling back to direct table select:', rpcError.message);
-    }
-
-    // 2. Direct table select fallback
-    const { data, error } = await supabase
-      .from('emergency_alerts')
-      .select('*')
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.warn('[AlertService] Error fetching alerts:', error.message);
-      return { alerts: [], error: error.message };
-    }
-
-    // Sort using single-source-of-truth priority engine
-    const sorted = prioritizeEmergencyAlerts(data || []);
-    return { alerts: sorted, error: null };
   } catch (err: any) {
-    console.error('[AlertService] Unexpected fetch error:', err);
-    return { alerts: [], error: err.message || 'Unknown network error' };
+    console.warn('[AlertService] Online fetch error (Device may be offline):', err.message);
+    fetchError = err.message;
   }
+
+  // 3. Retrieve local offline SQLite alerts & memory queue
+  const offlineAlerts: EmergencyAlert[] = [...pendingOfflineQueue];
+
+  try {
+    const sqlitePending = await getPendingOfflineSos();
+    if (sqlitePending && sqlitePending.length > 0) {
+      console.log(`[AlertService] Found ${sqlitePending.length} offline SOS alerts in SQLite`);
+
+      for (const item of sqlitePending) {
+        const alertObj = convertOfflineItemToAlert(item);
+        const alreadyInOffline = offlineAlerts.some((a) => a.id === alertObj.id);
+        if (!alreadyInOffline) {
+          offlineAlerts.push(alertObj);
+        }
+
+        // Gateway Bridge: If we have online connectivity, attempt background sync to Supabase
+        if (!fetchError && onlineAlerts.length >= 0) {
+          try {
+            const { data: syncedData, error: syncErr } = await supabase
+              .from('emergency_alerts')
+              .insert([{
+                pilgrim_name: alertObj.pilgrim_name,
+                pilgrim_phone: alertObj.pilgrim_phone,
+                pilgrim_age: alertObj.pilgrim_age,
+                emergency_card_id: alertObj.emergency_card_id,
+                dindi_name: alertObj.dindi_name,
+                problem_type: alertObj.problem_type,
+                emergency_type: alertObj.emergency_type,
+                notes: alertObj.notes,
+                medical_context: alertObj.medical_context,
+                severity: alertObj.severity,
+                status: 'nearby',
+                distance_away: 'BLE Mesh Relay',
+                location_name: alertObj.location_name,
+                latitude: alertObj.latitude,
+                longitude: alertObj.longitude,
+                created_at: alertObj.created_at,
+                updated_at: new Date().toISOString(),
+              }])
+              .select()
+              .single();
+
+            if (!syncErr && syncedData) {
+              console.log('[AlertService] ✅ Synced offline SQLite alert to Supabase:', syncedData.id);
+              await markSosSynced(item.msg_id);
+              
+              // Enriched synced alert
+              const enriched: EmergencyAlert = {
+                ...(syncedData as EmergencyAlert),
+                priorityData: calculateDynamicPriority(syncedData),
+              };
+
+              // Notify active listeners (e.g. Pilgrim Home Screen to switch to Supabase tracking)
+              offlineSyncListeners.forEach((fn) => {
+                try {
+                  fn(alertObj.id, enriched);
+                } catch {
+                  // Ignore listener error
+                }
+              });
+
+              // Remove from in-memory offline queue
+              pendingOfflineQueue = pendingOfflineQueue.filter((a) => a.id !== alertObj.id);
+            }
+          } catch {
+            // Ignore background sync errors
+          }
+        }
+      }
+    }
+  } catch (sqlErr) {
+    console.warn('[AlertService] SQLite read error:', sqlErr);
+  }
+
+  // 4. Merge online & offline alerts (deduplicating by ID or card_id + created_at)
+  const mergedMap = new Map<string, EmergencyAlert>();
+
+  for (const a of onlineAlerts) {
+    mergedMap.set(a.id, a);
+  }
+  for (const off of offlineAlerts) {
+    if (!mergedMap.has(off.id)) {
+      mergedMap.set(off.id, off);
+    }
+  }
+
+  const mergedList = Array.from(mergedMap.values());
+  const sorted = prioritizeEmergencyAlerts(mergedList);
+
+  return { alerts: sorted, error: fetchError && mergedList.length === 0 ? fetchError : null };
 }
 
 /**
@@ -422,6 +592,48 @@ export async function claimEmergencyAlert(
 }> {
   try {
     const now = new Date().toISOString();
+
+    // Handle offline-first BLE alerts locally if not yet synced to Supabase
+    if (alertId.startsWith('offline-')) {
+      const offlineItem = pendingOfflineQueue.find((a) => a.id === alertId);
+      const claimedAlert: EmergencyAlert = offlineItem
+        ? {
+            ...offlineItem,
+            status: 'in_progress',
+            responder_id: volunteer.id || 'vol-current',
+            responder_name: volunteer.name,
+            responder_phone: volunteer.phone || '+91 98221 55660',
+            claimed_at: now,
+            updated_at: now,
+          }
+        : {
+            id: alertId,
+            pilgrim_name: 'Varkari Pilgrim',
+            problem_type: 'Offline Emergency',
+            severity: 'critical',
+            status: 'in_progress',
+            responder_id: volunteer.id || 'vol-current',
+            responder_name: volunteer.name,
+            responder_phone: volunteer.phone || '+91 98221 55660',
+            claimed_at: now,
+            updated_at: now,
+            created_at: now,
+          };
+
+      // Send BLE ACK packet back to the pilgrim via Bluetooth mesh
+      const rawMsgId = alertId.replace('offline-', '');
+      bleMeshManager.emit({
+        type: 'ack_received',
+        ack: {
+          msgId: rawMsgId,
+          volunteerName: volunteer.name,
+          volunteerPhone: volunteer.phone || '+91 98221 55660',
+          timestamp: Math.floor(Date.now() / 1000),
+        },
+      });
+
+      return { alert: claimedAlert, alreadyClaimed: false, error: null };
+    }
 
     // 1. Try atomic database RPC first if available
     try {

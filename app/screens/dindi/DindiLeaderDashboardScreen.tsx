@@ -400,7 +400,7 @@ export const DindiLeaderDashboardScreen: React.FC<
                 color="#FFFFFF"
                 style={{ marginRight: 6 }}
               />
-              <Text style={styles.heroSyncButtonText}>Bluetooth Roll-Call</Text>
+              <Text style={styles.heroSyncButtonText}>Digital Roll-Call</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
