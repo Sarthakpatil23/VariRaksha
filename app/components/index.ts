@@ -12,3 +12,5 @@ export { VariRakshaChatbot } from './chat/VariRakshaChatbot';
 export { AIBlob } from './blob/AIBlob';
 export type { AIBlobProps } from './blob/AIBlob';
 export { VoiceBlobModal } from './blob/VoiceBlobModal';
+export { VarkariInteractiveMap } from './map/VarkariInteractiveMap';
+export { VarkariMapModal } from './map/VarkariMapModal';

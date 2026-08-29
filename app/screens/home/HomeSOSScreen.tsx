@@ -18,6 +18,8 @@ import { MainTabScreenProps } from '../../navigation/types';
 import { colors, spacing, typography } from '../../constants';
 import { VariRakshaChatbot } from '../../components/chat/VariRakshaChatbot';
 import { VoiceBlobModal } from '../../components/blob/VoiceBlobModal';
+import { VarkariInteractiveMap } from '../../components/map/VarkariInteractiveMap';
+import { VarkariMapModal } from '../../components/map/VarkariMapModal';
 
 // Mock Temperature Data & Threshold
 const MOCK_TEMPERATURE_NUMERIC = 34; // 34°C
@@ -31,6 +33,9 @@ export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
   const [holdPercent, setHoldPercent] = useState<number>(0);
   const [chatModalVisible, setChatModalVisible] = useState<boolean>(false);
   const [voiceBlobVisible, setVoiceBlobVisible] = useState<boolean>(false);
+  const [medicalModalVisible, setMedicalModalVisible] = useState<boolean>(false);
+  const [mapModalVisible, setMapModalVisible] = useState<boolean>(false);
+  const [selectedMapPointId, setSelectedMapPointId] = useState<string | null>(null);
 
   // Animated progress for 2-second hold interaction
   const progressAnim = useRef(new Animated.Value(0)).current;
@@ -106,7 +111,7 @@ export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
   };
 
   const handleViewMedicalID = () => {
-    navigation.navigate('Medical');
+    setMedicalModalVisible(true);
   };
 
   const handleChatAction = (actionType: string) => {
@@ -114,7 +119,7 @@ export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
       handleCallLeader();
     } else if (actionType === 'medical_sos') {
       setChatModalVisible(false);
-      navigation.navigate('Medical');
+      setMedicalModalVisible(true);
     }
   };
 
@@ -282,6 +287,106 @@ export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
             <Ionicons name="chevron-forward" size={14} color={colors.maroon} />
           </TouchableOpacity>
 
+          {/* INTERACTIVE VARKARI ROUTE & SUPPORT MAP PREVIEW */}
+          <View style={styles.mapSectionCard}>
+            <View style={styles.mapSectionHeader}>
+              <View style={styles.mapTitleRow}>
+                <Ionicons name="map-sharp" size={18} color={colors.maroon} />
+                <Text style={styles.mapSectionTitle}>
+                  {t('liveWariMap', 'लाईव्ह वारी नकाशा (Live Route Map)')}
+                </Text>
+              </View>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => setMapModalVisible(true)}
+                style={styles.expandHeaderLink}
+              >
+                <Text style={styles.expandHeaderLinkText}>
+                  {t('exploreMap', 'पूर्ण नकाशा')}
+                </Text>
+                <Ionicons name="expand-outline" size={14} color={colors.saffronDark} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.mapSubtitleText}>
+              {t(
+                'mapLocationSub',
+                '📍 वाखरी प्रवेशद्वाराजवळ · १२.५ कि.मी. पंढरपूर मंदिर बाकी',
+              )}
+            </Text>
+
+            {/* Embedded OpenStreetMap Preview */}
+            <View style={styles.mapEmbedWrapper}>
+              <VarkariInteractiveMap
+                isFullScreen={false}
+                onExpand={() => setMapModalVisible(true)}
+              />
+            </View>
+
+            {/* Nearby Quick Service Badges */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.nearbyServicesStrip}
+            >
+              <TouchableOpacity
+                activeOpacity={0.75}
+                onPress={() => {
+                  setSelectedMapPointId('med-1');
+                  setMapModalVisible(true);
+                }}
+                style={styles.nearbyPill}
+              >
+                <Text style={styles.nearbyPillIcon}>🏥</Text>
+                <Text style={styles.nearbyPillText}>
+                  {t('nearbyMedical', 'फिरते रुग्णालय · ३५० मी.')}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                activeOpacity={0.75}
+                onPress={() => {
+                  setSelectedMapPointId('wat-1');
+                  setMapModalVisible(true);
+                }}
+                style={styles.nearbyPill}
+              >
+                <Text style={styles.nearbyPillIcon}>🚰</Text>
+                <Text style={styles.nearbyPillText}>
+                  {t('nearbyWater', 'पाणी टँकर · १५० मी.')}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                activeOpacity={0.75}
+                onPress={() => {
+                  setSelectedMapPointId('food-1');
+                  setMapModalVisible(true);
+                }}
+                style={styles.nearbyPill}
+              >
+                <Text style={styles.nearbyPillIcon}>🍛</Text>
+                <Text style={styles.nearbyPillText}>
+                  {t('nearbyFood', 'महाप्रसाद · ४०० मी.')}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                activeOpacity={0.75}
+                onPress={() => {
+                  setSelectedMapPointId('vol-1');
+                  setMapModalVisible(true);
+                }}
+                style={styles.nearbyPill}
+              >
+                <Text style={styles.nearbyPillIcon}>🧑‍🤝‍🧑</Text>
+                <Text style={styles.nearbyPillText}>
+                  {t('nearbyVolunteer', 'स्वयंसेवक · २२० मी.')}
+                </Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+
           {/* Compact Cards Row: My Dindi Leader & My Medical ID */}
           <View style={styles.compactCardsRow}>
             {/* Left Card: My Dindi Leader */}
@@ -370,6 +475,129 @@ export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
           />
         </SafeAreaView>
       </Modal>
+
+      {/* EMERGENCY MEDICAL ID MODAL */}
+      <Modal
+        visible={medicalModalVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setMedicalModalVisible(false)}
+      >
+        <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
+          <View style={styles.medicalModalContainer}>
+            {/* Modal Header */}
+            <View style={styles.medicalModalHeader}>
+              <View>
+                <Text style={styles.medicalModalSub}>OFFLINE EMERGENCY CARD</Text>
+                <Text style={styles.medicalModalTitle}>My Medical ID</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setMedicalModalVisible(false)}
+                style={styles.medicalModalCloseBtn}
+              >
+                <Ionicons name="close" size={22} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.medicalModalScroll}>
+              {/* QR Code & Identity Card */}
+              <View style={styles.medicalCardHero}>
+                <View style={styles.medicalQrContainer}>
+                  <Ionicons name="qr-code" size={110} color={colors.maroon} />
+                  <Text style={styles.medicalQrCaption}>Scan for Emergency Medical Mesh Data</Text>
+                </View>
+
+                <View style={styles.medicalPilgrimDetails}>
+                  <Text style={styles.medicalPilgrimName}>Tukaram Patil</Text>
+                  <Text style={styles.medicalPilgrimSub}>Age: 58 · Male · Dindi #12</Text>
+                  <View style={styles.bloodBadge}>
+                    <Ionicons name="water" size={16} color="#D32F2F" />
+                    <Text style={styles.bloodBadgeText}>Blood Group: O+ (Positive)</Text>
+                  </View>
+                </View>
+              </View>
+
+              {/* Critical Health Parameters */}
+              <View style={styles.medicalSectionCard}>
+                <Text style={styles.medicalSectionTitle}>CRITICAL HEALTH DATA</Text>
+
+                <View style={styles.medicalItemRow}>
+                  <Ionicons name="alert-circle-outline" size={18} color="#D32F2F" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.medicalItemLabel}>Allergies</Text>
+                    <Text style={styles.medicalItemValue}>Penicillin, Dust</Text>
+                  </View>
+                </View>
+
+                <View style={styles.medicalItemRow}>
+                  <Ionicons name="heart-outline" size={18} color="#E65100" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.medicalItemLabel}>Chronic Conditions</Text>
+                    <Text style={styles.medicalItemValue}>Mild Hypertension (BP), Knee Arthritis</Text>
+                  </View>
+                </View>
+
+                <View style={styles.medicalItemRow}>
+                  <Ionicons name="fitness-outline" size={18} color="#2E7D32" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.medicalItemLabel}>Daily Medications</Text>
+                    <Text style={styles.medicalItemValue}>Amlodipine 5mg (Morning after breakfast)</Text>
+                  </View>
+                </View>
+              </View>
+
+              {/* Emergency Contacts */}
+              <View style={styles.medicalSectionCard}>
+                <Text style={styles.medicalSectionTitle}>EMERGENCY CONTACTS</Text>
+
+                <View style={styles.medicalContactItem}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.medicalContactName}>Ramesh Patil (Son)</Text>
+                    <Text style={styles.medicalContactPhone}>+91 98220 12345</Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => Alert.alert('Calling Ramesh Patil', 'Dialing +91 98220 12345...')}
+                    style={styles.contactCallBtn}
+                  >
+                    <Ionicons name="call" size={16} color={colors.surface} />
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.medicalContactItem}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.medicalContactName}>Sopanrao Maharaj (Dindi Leader)</Text>
+                    <Text style={styles.medicalContactPhone}>+91 98765 43210 · Dindi 12</Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={handleCallLeader}
+                    style={styles.contactCallBtn}
+                  >
+                    <Ionicons name="call" size={16} color={colors.surface} />
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Offline Mesh Safety Note */}
+              <View style={styles.meshSafetyNote}>
+                <Ionicons name="shield-checkmark" size={18} color={colors.success} />
+                <Text style={styles.meshSafetyNoteText}>
+                  This medical profile is stored encrypted offline on this device and broadcasts over BLE mesh in emergency SOS mode.
+                </Text>
+              </View>
+            </ScrollView>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      {/* FULL INTERACTIVE OPENSTREETMAP MODAL */}
+      <VarkariMapModal
+        visible={mapModalVisible}
+        onClose={() => {
+          setMapModalVisible(false);
+          setSelectedMapPointId(null);
+        }}
+        initialPointId={selectedMapPointId}
+      />
     </SafeAreaView>
   );
 };
@@ -666,6 +894,236 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: typography.fontWeight.bold,
     color: colors.maroon,
+  },
+  medicalModalContainer: {
+    flex: 1,
+    backgroundColor: colors.background,
+    paddingHorizontal: spacing.lg,
+  },
+  medicalModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  medicalModalSub: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: colors.maroon,
+    letterSpacing: 1,
+  },
+  medicalModalTitle: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: colors.text,
+  },
+  medicalModalCloseBtn: {
+    padding: 6,
+    borderRadius: 20,
+    backgroundColor: colors.surface,
+  },
+  medicalModalScroll: {
+    paddingVertical: spacing.md,
+    gap: spacing.md,
+  },
+  medicalCardHero: {
+    backgroundColor: colors.surface,
+    borderRadius: 16,
+    padding: spacing.md,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  medicalQrContainer: {
+    alignItems: 'center',
+    padding: 12,
+    backgroundColor: '#FAF5EE',
+    borderRadius: 16,
+    marginBottom: 12,
+  },
+  medicalQrCaption: {
+    fontSize: 11,
+    color: colors.textSecondary,
+    marginTop: 6,
+    fontWeight: '600',
+  },
+  medicalPilgrimDetails: {
+    alignItems: 'center',
+    width: '100%',
+  },
+  medicalPilgrimName: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: colors.text,
+  },
+  medicalPilgrimSub: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    marginTop: 2,
+    marginBottom: 8,
+  },
+  bloodBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFEBEE',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    gap: 6,
+  },
+  bloodBadgeText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#D32F2F',
+  },
+  medicalSectionCard: {
+    backgroundColor: colors.surface,
+    borderRadius: 16,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: 12,
+  },
+  medicalSectionTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: colors.maroon,
+    letterSpacing: 0.5,
+  },
+  medicalItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  medicalItemLabel: {
+    fontSize: 11,
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
+  medicalItemValue: {
+    fontSize: 14,
+    color: colors.text,
+    fontWeight: '700',
+    marginTop: 1,
+  },
+  medicalContactItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  },
+  medicalContactName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  medicalContactPhone: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  contactCallBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.saffronDark,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  meshSafetyNote: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E8F5E9',
+    padding: 12,
+    borderRadius: 12,
+    gap: 10,
+    marginBottom: 20,
+  },
+  meshSafetyNoteText: {
+    fontSize: 12,
+    color: '#1B5E20',
+    flex: 1,
+    lineHeight: 16,
+  },
+  mapSectionCard: {
+    backgroundColor: colors.surface,
+    borderRadius: 16,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  mapSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  mapTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  mapSectionTitle: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: colors.maroon,
+  },
+  expandHeaderLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF3E0',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    gap: 4,
+  },
+  expandHeaderLinkText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: colors.saffronDark,
+  },
+  mapSubtitleText: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    fontWeight: '600',
+    marginBottom: 10,
+  },
+  mapEmbedWrapper: {
+    height: 180,
+    borderRadius: 14,
+    overflow: 'hidden',
+    marginBottom: 10,
+  },
+  nearbyServicesStrip: {
+    gap: 8,
+    paddingVertical: 2,
+  },
+  nearbyPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.background,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: 5,
+  },
+  nearbyPillIcon: {
+    fontSize: 13,
+  },
+  nearbyPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.text,
   },
 });
 

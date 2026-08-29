@@ -60,8 +60,17 @@
   "chat": "AI Sahayak",
   "commanderAI": "Commander AI",
   "medical": "Medical ID",
+  "calendar": "Schedule",
+  "schedule": "Schedule",
   "dindi": "Dindi Group",
   "settings": "Settings",
+  "liveWariMap": "Live Wari Route Map",
+  "exploreMap": "Full Map",
+  "mapLocationSub": "📍 Near Wakhari · 12.5 km to Pandharpur Temple",
+  "nearbyMedical": "Mobile Hospital · 350m",
+  "nearbyWater": "Water Tanker · 150m",
+  "nearbyFood": "Mahaprasad · 400m",
+  "nearbyVolunteer": "Volunteers · 220m",
   "roles": {
     "varkari": {
       "title": "Varkari (Pilgrim)",

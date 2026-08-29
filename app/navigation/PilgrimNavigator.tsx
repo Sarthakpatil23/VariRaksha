@@ -7,7 +7,7 @@ import { colors, typography } from '../constants';
 
 import HomeSOSScreen from '../screens/home/HomeSOSScreen';
 import ChatScreen from '../screens/chat/ChatScreen';
-import MedicalIDScreen from '../screens/medical/MedicalIDScreen';
+import CalendarScheduleScreen from '../screens/calendar/CalendarScheduleScreen';
 import DindiGroupScreen from '../screens/dindi/DindiGroupScreen';
 import SettingsScreen from '../screens/settings/SettingsScreen';
 
@@ -58,12 +58,12 @@ export const PilgrimNavigator: React.FC = () => {
         }}
       />
       <Tab.Screen
-        name="Medical"
-        component={MedicalIDScreen}
+        name="Calendar"
+        component={CalendarScheduleScreen}
         options={{
-          title: t('medical', 'Medical ID'),
+          title: t('calendar', 'Schedule'),
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="medkit-sharp" size={size} color={color} />
+            <Ionicons name="calendar-sharp" size={size} color={color} />
           ),
         }}
       />

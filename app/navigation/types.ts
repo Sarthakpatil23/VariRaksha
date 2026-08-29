@@ -18,9 +18,10 @@ export type OnboardingStackParamList = {
 export type PilgrimTabParamList = {
   Home: undefined;
   Chat: undefined;
-  Medical: undefined;
+  Calendar: undefined;
   Dindi: undefined;
   Settings: undefined;
+  Medical?: undefined;
 };
 
 // MainTabsParamList kept as alias for backward compatibility

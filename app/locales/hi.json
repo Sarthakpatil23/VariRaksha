@@ -60,8 +60,17 @@
   "chat": "AI सहायक",
   "commanderAI": "कमान AI",
   "medical": "मेडिकल आईडी",
+  "calendar": "समय सारणी",
+  "schedule": "समय सारणी",
   "dindi": "दिंडी समूह",
   "settings": "सेटिंग्स",
+  "liveWariMap": "लाइव वारी नक्शा",
+  "exploreMap": "पूरा नक्शा",
+  "mapLocationSub": "📍 वाखरी प्रवेश द्वार के पास · १२.५ किमी पंढरपुर मंदिर शेष",
+  "nearbyMedical": "मोबाइल अस्पताल · ३५० मी.",
+  "nearbyWater": "जल टैंकर · १५० मी.",
+  "nearbyFood": "महाप्रसाद · ४०० मी.",
+  "nearbyVolunteer": "स्वयंसेवक · २२० मी.",
   "roles": {
     "varkari": {
       "title": "वारकरी (तीर्थयात्री)",
