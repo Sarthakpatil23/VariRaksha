@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -22,6 +22,14 @@ import { VarkariInteractiveMap } from '../../components/map/VarkariInteractiveMa
 import { VarkariMapModal } from '../../components/map/VarkariMapModal';
 import { useUserProfile } from '../../lib/userStore';
 import { translateUserProfile } from '../../utils/translator';
+
+import { SOSReportModal, SOSReportData } from '../../components/sos/SOSReportModal';
+import {
+  createEmergencySOS,
+  subscribeToSingleAlert,
+  fetchAlertById,
+  EmergencyAlert,
+} from '../../services/alertService';
 
 // Mock Temperature Data & Threshold
 const MOCK_TEMPERATURE_NUMERIC = 34; // 34°C
@@ -51,6 +59,8 @@ export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
       };
   const [isHolding, setIsHolding] = useState<boolean>(false);
   const [holdPercent, setHoldPercent] = useState<number>(0);
+  const [sosReportModalVisible, setSosReportModalVisible] = useState<boolean>(false);
+  const [activeSosAlert, setActiveSosAlert] = useState<EmergencyAlert | null>(null);
   const [chatModalVisible, setChatModalVisible] = useState<boolean>(false);
   const [voiceBlobVisible, setVoiceBlobVisible] = useState<boolean>(false);
   const [medicalModalVisible, setMedicalModalVisible] = useState<boolean>(false);
@@ -79,7 +89,10 @@ export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
     }).start(({ finished }) => {
       progressAnim.removeListener(listenerId);
       if (finished) {
-        triggerSOS();
+        setIsHolding(false);
+        setHoldPercent(0);
+        Vibration.vibrate([0, 150, 80, 150]);
+        setSosReportModalVisible(true);
       }
     });
   };
@@ -95,24 +108,80 @@ export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
     }).start();
   };
 
-  const triggerSOS = () => {
-    setIsHolding(false);
-    setHoldPercent(0);
+  // Called when user confirms reason in SOSReportModal
+  const handleConfirmSOS = async (data: SOSReportData) => {
+    setSosReportModalVisible(false);
 
-    // Haptic feedback alert
-    Vibration.vibrate([0, 200, 100, 200]);
+    try {
+      const { alert: createdAlert, isOfflineQueued, error } = await createEmergencySOS({
+        problemType: data.reasonType,
+        description: data.description,
+        profile: rawProfile,
+      });
 
-    // Emergency alert
-    console.log('SOS Triggered successfully!');
-    Alert.alert(
-      t('sosAlertTitle', 'Emergency SOS Triggered'),
-      t(
-        'sosAlertMessage',
-        'Emergency responders and your Dindi Leader have been notified.',
-      ),
-      [{ text: 'OK' }],
-    );
+      if (error && !createdAlert) {
+        Alert.alert('SOS Error', error);
+        return;
+      }
+
+      if (createdAlert) {
+        setActiveSosAlert(createdAlert);
+        setMapModalVisible(true);
+
+        if (isOfflineQueued) {
+          Alert.alert(
+            t('sosQueuedTitle', 'SOS Queued (Offline Mode)'),
+            t('sosQueuedDesc', 'No internet connection detected. Your SOS has been queued and will sync automatically.'),
+          );
+        }
+      }
+    } catch (err: any) {
+      Alert.alert('Error', err.message || 'Failed to submit SOS alert');
+    }
   };
+
+  // Synchronize active SOS alert via Realtime subscription & fast 3s polling
+  useEffect(() => {
+    if (!activeSosAlert || activeSosAlert.id.startsWith('offline-') || activeSosAlert.status === 'resolved') {
+      return;
+    }
+
+    const alertId = activeSosAlert.id;
+
+    // 1. Supabase Realtime Single Channel
+    const unsubscribe = subscribeToSingleAlert(alertId, (updated) => {
+      console.log('[HomeSOSScreen] Realtime alert update received:', updated.status, updated.responder_name);
+      setActiveSosAlert(updated);
+      if (updated.status === 'in_progress') {
+        Vibration.vibrate([0, 200, 100, 200]);
+      } else if (updated.status === 'resolved') {
+        Vibration.vibrate(100);
+      }
+    });
+
+    // 2. Fast 3.5s Polling Fallback to guarantee immediate response
+    const pollInterval = setInterval(() => {
+      fetchAlertById(alertId).then((fresh) => {
+        if (fresh) {
+          setActiveSosAlert((prev) => {
+            if (prev && fresh.status !== prev.status) {
+              if (fresh.status === 'in_progress') {
+                Vibration.vibrate([0, 200, 100, 200]);
+              } else if (fresh.status === 'resolved') {
+                Vibration.vibrate(100);
+              }
+            }
+            return fresh;
+          });
+        }
+      });
+    }, 3500);
+
+    return () => {
+      unsubscribe();
+      clearInterval(pollInterval);
+    };
+  }, [activeSosAlert?.id, activeSosAlert?.status]);
 
   const handleOpenVoiceBlob = () => {
     navigation.navigate('Chat');
@@ -195,6 +264,59 @@ export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
             </Text>
           </View>
         </View>
+
+        {/* Live Active SOS Incident Banner on Home Screen */}
+        {activeSosAlert && (
+          <TouchableOpacity
+            activeOpacity={0.9}
+            onPress={() => setMapModalVisible(true)}
+            style={[
+              styles.homeSosBanner,
+              activeSosAlert.status === 'in_progress'
+                ? styles.homeSosBannerClaimed
+                : activeSosAlert.status === 'resolved'
+                ? styles.homeSosBannerResolved
+                : styles.homeSosBannerActive,
+            ]}
+          >
+            <View style={styles.homeSosBannerLeft}>
+              <Ionicons
+                name={
+                  activeSosAlert.status === 'resolved'
+                    ? 'checkmark-circle'
+                    : activeSosAlert.status === 'in_progress'
+                    ? 'shield-checkmark'
+                    : 'warning'
+                }
+                size={22}
+                color="#FFFFFF"
+              />
+              <View style={{ marginLeft: 10, flex: 1 }}>
+                <Text style={styles.homeSosBannerTitle}>
+                  {activeSosAlert.status === 'resolved'
+                    ? 'EMERGENCY RESOLVED'
+                    : activeSosAlert.status === 'in_progress'
+                    ? 'VOLUNTEER EN ROUTE'
+                    : '🚨 SOS ACTIVE'}
+                </Text>
+                <Text style={styles.homeSosBannerSubtext} numberOfLines={1}>
+                  {activeSosAlert.status === 'resolved'
+                    ? 'Responder completed assistance.'
+                    : activeSosAlert.status === 'in_progress'
+                    ? `Assigned: ${activeSosAlert.responder_name || 'Volunteer'} · Help is coming`
+                    : `${activeSosAlert.problem_type} · Searching nearby responder...`}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.homeSosBannerAction}>
+              <Text style={styles.homeSosBannerActionText}>
+                {activeSosAlert.status === 'resolved' ? 'Clear' : 'View Map'}
+              </Text>
+              <Ionicons name="chevron-forward" size={14} color="#FFFFFF" />
+            </View>
+          </TouchableOpacity>
+        )}
 
         <ScrollView
           contentContainerStyle={styles.scrollContent}
@@ -340,6 +462,34 @@ export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
               <VarkariInteractiveMap
                 isFullScreen={false}
                 onExpand={() => setMapModalVisible(true)}
+                activeSOS={
+                  activeSosAlert
+                    ? {
+                        id: activeSosAlert.id,
+                        lat: activeSosAlert.latitude || 17.712,
+                        lng: activeSosAlert.longitude || 75.241,
+                        pilgrimName: activeSosAlert.pilgrim_name,
+                        problemType: activeSosAlert.problem_type,
+                        status: activeSosAlert.status,
+                        responderName: activeSosAlert.responder_name,
+                        responderPhone: activeSosAlert.responder_phone,
+                      }
+                    : null
+                }
+                claimedRoute={
+                  activeSosAlert && activeSosAlert.status === 'in_progress'
+                    ? {
+                        volunteerLat: 17.6854,
+                        volunteerLng: 75.3211,
+                        sosLat: activeSosAlert.latitude || 17.712,
+                        sosLng: activeSosAlert.longitude || 75.241,
+                        pilgrimName: activeSosAlert.pilgrim_name,
+                        problemType: activeSosAlert.problem_type,
+                        distance: activeSosAlert.distance_away || '180m away',
+                        eta: '~2 min walk',
+                      }
+                    : null
+                }
               />
             </View>
 
@@ -627,6 +777,48 @@ export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
           setSelectedMapPointId(null);
         }}
         initialPointId={selectedMapPointId}
+        activeSOS={
+          activeSosAlert
+            ? {
+                id: activeSosAlert.id,
+                lat: activeSosAlert.latitude || 17.712,
+                lng: activeSosAlert.longitude || 75.241,
+                pilgrimName: activeSosAlert.pilgrim_name,
+                problemType: activeSosAlert.problem_type,
+                status: activeSosAlert.status,
+                responderName: activeSosAlert.responder_name,
+                responderPhone: activeSosAlert.responder_phone,
+              }
+            : null
+        }
+        claimedRoute={
+          activeSosAlert && activeSosAlert.status === 'in_progress'
+            ? {
+                volunteerLat: 17.6854,
+                volunteerLng: 75.3211,
+                sosLat: activeSosAlert.latitude || 17.712,
+                sosLng: activeSosAlert.longitude || 75.241,
+                pilgrimName: activeSosAlert.pilgrim_name,
+                problemType: activeSosAlert.problem_type,
+                distance: activeSosAlert.distance_away || '180m away',
+                eta: '~2 min walk',
+              }
+            : null
+        }
+        onCallVolunteer={(phone) => {
+          Alert.alert('Calling Responder', `Dialing ${phone}...`);
+        }}
+        onResolveSOS={() => {
+          setActiveSosAlert(null);
+          setMapModalVisible(false);
+        }}
+      />
+
+      {/* SOS CONFIRMATION & REASON REPORT MODAL */}
+      <SOSReportModal
+        visible={sosReportModalVisible}
+        onClose={() => setSosReportModalVisible(false)}
+        onConfirm={handleConfirmSOS}
       />
     </SafeAreaView>
   );
@@ -641,6 +833,61 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.xs,
+  },
+  homeSosBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 16,
+    marginBottom: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.18,
+    shadowRadius: 5,
+    elevation: 4,
+  },
+  homeSosBannerActive: {
+    backgroundColor: '#DC2626',
+  },
+  homeSosBannerClaimed: {
+    backgroundColor: '#1E40AF',
+  },
+  homeSosBannerResolved: {
+    backgroundColor: '#15803D',
+  },
+  homeSosBannerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  homeSosBannerTitle: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#FFFFFF',
+    letterSpacing: 0.5,
+  },
+  homeSosBannerSubtext: {
+    fontSize: 12,
+    color: '#FFFFFF',
+    opacity: 0.95,
+    marginTop: 2,
+  },
+  homeSosBannerAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.22)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+    marginLeft: 8,
+  },
+  homeSosBannerActionText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginRight: 2,
   },
   topBar: {
     flexDirection: 'row',

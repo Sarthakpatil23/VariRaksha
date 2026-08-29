@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,53 +7,305 @@ import {
   ScrollView,
   Image,
   Alert,
+  Vibration,
+  ActivityIndicator,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialIcons, FontAwesome5 } from '@expo/vector-icons';
 import { VolunteerTabScreenProps } from '../../navigation/types';
 import { colors, spacing, typography } from '../../constants';
-import { VarkariInteractiveMap } from '../../components/map/VarkariInteractiveMap';
+import { VarkariInteractiveMap, ClaimedRouteMapData } from '../../components/map/VarkariInteractiveMap';
 import { VarkariMapModal } from '../../components/map/VarkariMapModal';
+import {
+  fetchEmergencyAlerts,
+  claimEmergencyAlert,
+  resolveEmergencyAlert,
+  subscribeToEmergencyAlerts,
+  EmergencyAlert,
+} from '../../services/alertService';
+
+// Default initial alerts in case DB is newly initialized or offline
+const INITIAL_DEFAULT_ALERTS: EmergencyAlert[] = [
+  {
+    id: 'e1111111-1111-1111-1111-111111111101',
+    pilgrim_name: 'Ramesh Kulkarni',
+    pilgrim_phone: '+91 94230 11221',
+    pilgrim_age: 68,
+    pilgrim_gender: 'Male',
+    dindi_name: 'Sant Tukaram Maharaj Dindi #04',
+    problem_type: 'Severe Chest Discomfort & High Blood Pressure',
+    medical_context: 'Hypertension · Cardiac Stent (2021) · Blood Group B+',
+    severity: 'critical',
+    status: 'nearby',
+    distance_away: '180m away',
+    location_name: 'Wakhari Main Gate',
+    latitude: 17.6862,
+    longitude: 75.3225,
+    created_at: new Date(Date.now() - 2 * 60000).toISOString(),
+  },
+  {
+    id: 'e2222222-2222-2222-2222-222222222202',
+    pilgrim_name: 'Anita Desai',
+    pilgrim_phone: '+91 94230 10002',
+    pilgrim_age: 54,
+    pilgrim_gender: 'Female',
+    dindi_name: 'Alandi Dindi #12',
+    problem_type: 'Acute Dehydration & Heat Exhaustion',
+    medical_context: 'Dehydration · Blood Group O+',
+    severity: 'moderate',
+    status: 'in_progress',
+    distance_away: '50m away',
+    location_name: 'Water Station 2',
+    latitude: 17.6845,
+    longitude: 75.3195,
+    responder_id: 'vol-rajwardhan',
+    responder_name: 'Rajwardhan Patil',
+    responder_phone: '+91 98221 55660',
+    created_at: new Date(Date.now() - 5 * 60000).toISOString(),
+  },
+  {
+    id: 'e3333333-3333-3333-3333-333333333303',
+    pilgrim_name: 'Suresh Patil',
+    pilgrim_phone: '+91 94230 40003',
+    pilgrim_age: 62,
+    pilgrim_gender: 'Male',
+    dindi_name: 'Dindi #01',
+    problem_type: 'Wheelchair Assistance Needed at Pavilion',
+    medical_context: 'Mobility Assist · Blood Group A+',
+    severity: 'moderate',
+    status: 'nearby',
+    distance_away: '320m away',
+    location_name: 'Rest Pavilion',
+    latitude: 17.6875,
+    longitude: 75.3240,
+    created_at: new Date(Date.now() - 14 * 60000).toISOString(),
+  },
+];
 
 export const VolunteerDashboardScreen: React.FC<
   VolunteerTabScreenProps<'VolunteerDashboard'>
 > = () => {
   const [isAvailable, setIsAvailable] = useState<boolean>(true);
+  const [alerts, setAlerts] = useState<EmergencyAlert[]>(INITIAL_DEFAULT_ALERTS);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
   const [mapModalVisible, setMapModalVisible] = useState<boolean>(false);
   const [selectedMapPointId, setSelectedMapPointId] = useState<string | null>(null);
-  const [claimedAlerts, setClaimedAlerts] = useState<Record<string, boolean>>({
-    'alt-anita': true, // Anita Desai is currently claimed in progress
-  });
+  const [activeClaimedRoute, setActiveClaimedRoute] = useState<ClaimedRouteMapData | null>(null);
+
+  const currentVolunteer = {
+    id: 'vol-rajwardhan',
+    name: 'Rajwardhan Patil',
+    phone: '+91 98221 55660',
+  };
+
+  // Load live alerts from Supabase on mount and subscribe to Realtime updates + fast polling fallback
+  useEffect(() => {
+    loadAlerts();
+
+    // 1. Supabase Realtime Postgres Changes Subscription
+    const unsubscribe = subscribeToEmergencyAlerts((payload) => {
+      console.log('[VolunteerDashboard] Realtime alert update:', payload.eventType);
+
+      if (payload.eventType === 'INSERT') {
+        const newAlert = payload.new as EmergencyAlert;
+        Vibration.vibrate([0, 250, 100, 250]);
+        setAlerts((prev) => {
+          const exists = prev.some((a) => a.id === newAlert.id);
+          if (exists) return prev;
+          return [newAlert, ...prev];
+        });
+      } else if (payload.eventType === 'UPDATE') {
+        const updatedAlert = payload.new as EmergencyAlert;
+        setAlerts((prev) =>
+          prev.map((a) => (a.id === updatedAlert.id ? updatedAlert : a)),
+        );
+      } else if (payload.eventType === 'DELETE') {
+        setAlerts((prev) => prev.filter((a) => a.id !== payload.old.id));
+      }
+    });
+
+    // 2. Fast 3.5s Polling Fallback to guarantee delivery even if mobile socket sleeps
+    const pollInterval = setInterval(() => {
+      fetchEmergencyAlerts().then(({ alerts: freshAlerts, error }) => {
+        if (!error && freshAlerts && freshAlerts.length > 0) {
+          setAlerts((prev) => {
+            // Check if there are newly added alerts that we haven't seen yet
+            const prevIds = new Set(prev.map((a) => a.id));
+            const hasNew = freshAlerts.some((a) => !prevIds.has(a.id) && a.status === 'nearby');
+            if (hasNew) {
+              Vibration.vibrate([0, 200, 100, 200]);
+            }
+            return freshAlerts;
+          });
+        }
+      });
+    }, 3500);
+
+    return () => {
+      unsubscribe();
+      clearInterval(pollInterval);
+    };
+  }, []);
+
+  const loadAlerts = async () => {
+    setIsLoading(true);
+    const { alerts: fetchedAlerts, error } = await fetchEmergencyAlerts();
+    setIsLoading(false);
+
+    if (!error && fetchedAlerts.length > 0) {
+      setAlerts(fetchedAlerts);
+    }
+  };
 
   const handleToggleDuty = () => {
     setIsAvailable((prev) => !prev);
   };
 
-  const handleRespond = (name: string, id: string) => {
+  // ATOMIC CLAIM ACTION (Respond Now)
+  const handleRespond = (alertItem: EmergencyAlert) => {
     Alert.alert(
       'Respond to Alert',
-      `Do you want to claim the alert for ${name}?`,
+      `Do you want to claim and dispatch to ${alertItem.pilgrim_name}?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Claim & Respond',
           style: 'default',
-          onPress: () => {
-            setClaimedAlerts((prev) => ({ ...prev, [id]: true }));
+          onPress: async () => {
+            Vibration.vibrate(50);
+            const { alert: claimed, alreadyClaimed, claimedBy, error } =
+              await claimEmergencyAlert(alertItem.id, currentVolunteer);
+
+            if (alreadyClaimed) {
+              Alert.alert(
+                'Already Claimed',
+                `This emergency alert is already being handled by ${claimedBy || 'another volunteer'}.`,
+              );
+              loadAlerts();
+              return;
+            }
+
+            if (error) {
+              Alert.alert('Claim Error', error);
+              return;
+            }
+
+            if (claimed) {
+              // Update state locally
+              setAlerts((prev) =>
+                prev.map((a) => (a.id === claimed.id ? claimed : a)),
+              );
+
+              // Open navigation route
+              handleNavigate(claimed);
+            }
           },
         },
       ],
     );
   };
 
-  const handleCall = (name: string) => {
-    Alert.alert('Calling Pilgrim', `Dialing registered emergency contact for ${name}...`);
+  // DIRECT NAVIGATION ROUTE MAP ACTION
+  const handleNavigate = (alertItem: EmergencyAlert) => {
+    const route: ClaimedRouteMapData = {
+      volunteerLat: 17.6854,
+      volunteerLng: 75.3211,
+      sosLat: alertItem.latitude || 17.7120,
+      sosLng: alertItem.longitude || 75.2410,
+      pilgrimName: alertItem.pilgrim_name,
+      problemType: alertItem.problem_type,
+      distance: alertItem.distance_away || '180m away',
+      eta: '~2 min walk',
+    };
+    setActiveClaimedRoute(route);
+    setSelectedMapPointId(null);
+    setMapModalVisible(true);
+  };
+
+  // RESOLVE ACTION
+  const handleResolve = (alertItem: EmergencyAlert) => {
+    Alert.alert(
+      'Resolve Emergency',
+      `Confirm that ${alertItem.pilgrim_name} has been safely assisted and the incident can be closed?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Mark Resolved',
+          style: 'destructive',
+          onPress: async () => {
+            Vibration.vibrate(60);
+            const { alert: resolved, error } = await resolveEmergencyAlert(
+              alertItem.id,
+              'Volunteer arrived on scene and stabilized pilgrim.',
+            );
+
+            if (error) {
+              Alert.alert('Resolve Error', error);
+              return;
+            }
+
+            if (resolved) {
+              setAlerts((prev) =>
+                prev.map((a) => (a.id === resolved.id ? resolved : a)),
+              );
+              Alert.alert('Emergency Resolved', 'Incident marked as completed.');
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const handleCall = (phone?: string, name?: string) => {
+    const targetPhone = phone || '+91 94230 11221';
+    Vibration.vibrate(30);
+    Linking.openURL(`tel:${targetPhone}`).catch(() => {
+      Alert.alert('Calling Pilgrim', `Dialing ${targetPhone} for ${name || 'Pilgrim'}...`);
+    });
   };
 
   const handleOpenPOI = (pointId: string) => {
+    setActiveClaimedRoute(null);
     setSelectedMapPointId(pointId);
     setMapModalVisible(true);
   };
+
+  // Filter active incoming / in-progress alerts
+  const activeAlerts = alerts.filter((a) => a.status !== 'resolved');
+  const nearbyCount = alerts.filter((a) => a.status === 'nearby').length;
+
+  const formatTimeAgo = (dateStr: string) => {
+    const diff = Math.max(0, Date.now() - new Date(dateStr).getTime());
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'Just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hours = Math.floor(mins / 60);
+    return `${hours}h ago`;
+  };
+
+  // Find if there is an active claimed alert by this volunteer
+  const currentlyClaimedAlert = alerts.find(
+    (a) =>
+      a.status === 'in_progress' &&
+      (a.responder_id === currentVolunteer.id ||
+        a.responder_name?.toLowerCase() === currentVolunteer.name.toLowerCase()),
+  );
+
+  const currentMapRoute: ClaimedRouteMapData | null =
+    activeClaimedRoute ||
+    (currentlyClaimedAlert
+      ? {
+          volunteerLat: 17.6854,
+          volunteerLng: 75.3211,
+          sosLat: currentlyClaimedAlert.latitude || 17.7120,
+          sosLng: currentlyClaimedAlert.longitude || 75.2410,
+          pilgrimName: currentlyClaimedAlert.pilgrim_name,
+          problemType: currentlyClaimedAlert.problem_type,
+          distance: currentlyClaimedAlert.distance_away || '180m away',
+          eta: '~2 min walk',
+        }
+      : null);
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -62,9 +314,9 @@ export const VolunteerDashboardScreen: React.FC<
         <TouchableOpacity
           activeOpacity={0.7}
           style={styles.navIconBtn}
-          onPress={() => {}}
+          onPress={loadAlerts}
         >
-          <Ionicons name="menu-outline" size={26} color={colors.maroon} />
+          <Ionicons name="refresh-outline" size={24} color={colors.maroon} />
         </TouchableOpacity>
 
         <Text style={styles.brandTitle}>VariRaksha</Text>
@@ -130,207 +382,196 @@ export const VolunteerDashboardScreen: React.FC<
           <View style={styles.sectionTitleWithDot}>
             <Text style={styles.sectionHeading}>Incoming Alerts</Text>
             <View style={styles.nearbyCountPill}>
-              <Text style={styles.nearbyCountPillText}>3 Nearby</Text>
+              <Text style={styles.nearbyCountPillText}>{nearbyCount} Nearby</Text>
             </View>
           </View>
-          <Text style={styles.liveQueueSubtext}>Live Dispatch Queue</Text>
+          <TouchableOpacity onPress={loadAlerts} style={{ flexDirection: 'row', alignItems: 'center' }}>
+            {isLoading && <ActivityIndicator size="small" color={colors.maroon} style={{ marginRight: 4 }} />}
+            <Text style={styles.liveQueueSubtext}>Live Dispatch Queue</Text>
+          </TouchableOpacity>
         </View>
 
-        {/* 4. ALERTS STACK */}
+        {/* 4. REALTIME DYNAMIC ALERTS STACK */}
         <View style={styles.alertsContainer}>
-          {/* ALERT CARD 1: RAMESH KULKARNI, 68 (Critical) */}
-          <View style={[styles.alertCard, styles.alertCardCritical]}>
-            <View style={styles.alertCardHeader}>
-              <View style={styles.alertIconCircleRed}>
-                <MaterialIcons name="medical-services" size={24} color="#DC2626" />
-              </View>
-              <View style={styles.alertInfoTextGroup}>
-                <View style={styles.titleWithTimestampRow}>
-                  <Text style={styles.pilgrimName}>Ramesh Kulkarni, 68</Text>
-                  <Text style={styles.timestampText}>2m ago</Text>
-                </View>
-                <View style={styles.locationRow}>
-                  <Ionicons name="location-outline" size={13} color="#6B7280" />
-                  <Text style={styles.locationText}>180m away · Wakhari Main Gate</Text>
-                </View>
-              </View>
-            </View>
-
-            {/* Emergency Distress Reason Snippet */}
-            <View style={styles.reasonBox}>
-              <Text style={styles.reasonText}>
-                ⚠️ Severe Chest Discomfort & High Blood Pressure
+          {activeAlerts.length === 0 ? (
+            <View style={styles.emptyQueueCard}>
+              <Ionicons name="shield-checkmark" size={36} color="#15803D" />
+              <Text style={styles.emptyQueueTitle}>All Clear in Sector 1</Text>
+              <Text style={styles.emptyQueueSubtitle}>
+                No active SOS alerts in your corridor. Stand by for live notifications.
               </Text>
             </View>
+          ) : (
+            activeAlerts.map((item) => {
+              const isClaimedByMe =
+                item.responder_id === currentVolunteer.id ||
+                item.responder_name?.toLowerCase() === currentVolunteer.name.toLowerCase();
+              const isClaimedByOther = item.status === 'in_progress' && !isClaimedByMe;
+              const isCritical = item.severity === 'critical';
 
-            {/* Tags: Important info in short */}
-            <View style={styles.tagsRow}>
-              <View style={styles.tagPill}>
-                <Text style={styles.tagPillText}>🫀 Hypertension</Text>
-              </View>
-              <View style={styles.tagPill}>
-                <Text style={styles.tagPillText}>🩸 B+</Text>
-              </View>
-              <View style={styles.tagPill}>
-                <Text style={styles.tagPillText}>🚩 Dindi #04</Text>
-              </View>
-            </View>
+              return (
+                <View
+                  key={item.id}
+                  style={[
+                    styles.alertCard,
+                    isCritical
+                      ? styles.alertCardCritical
+                      : item.status === 'in_progress'
+                      ? styles.alertCardInProgress
+                      : styles.alertCardMobility,
+                  ]}
+                >
+                  {/* In Progress Status Badge */}
+                  {item.status === 'in_progress' && (
+                    <View style={styles.inProgressBadge}>
+                      <Ionicons
+                        name="checkmark"
+                        size={13}
+                        color="#FFFFFF"
+                        style={{ marginRight: 3 }}
+                      />
+                      <Text style={styles.inProgressBadgeText}>In Progress</Text>
+                    </View>
+                  )}
 
-            {/* Primary Action Button */}
-            {claimedAlerts['alt-ramesh'] ? (
-              <View style={styles.claimedByYouBanner}>
-                <Text style={styles.claimedByYouBannerText}>Claimed by you</Text>
-              </View>
-            ) : (
-              <TouchableOpacity
-                activeOpacity={0.85}
-                onPress={() => handleRespond('Ramesh Kulkarni', 'alt-ramesh')}
-                style={styles.respondNowButton}
-              >
-                <FontAwesome5
-                  name="running"
-                  size={15}
-                  color="#FFFFFF"
-                  style={{ marginRight: 8 }}
-                />
-                <Text style={styles.respondNowButtonText}>Respond Now · ~2 min walk</Text>
-              </TouchableOpacity>
-            )}
-          </View>
+                  {/* Header: Avatar icon, Name, Timestamp, Location */}
+                  <View style={styles.alertCardHeader}>
+                    <View
+                      style={[
+                        styles.alertIconCircle,
+                        isCritical
+                          ? styles.alertIconCircleRed
+                          : item.status === 'in_progress'
+                          ? styles.alertIconCircleBlue
+                          : styles.alertIconCircleAmber,
+                      ]}
+                    >
+                      {isCritical ? (
+                        <MaterialIcons name="medical-services" size={22} color="#DC2626" />
+                      ) : item.status === 'in_progress' ? (
+                        <Ionicons name="water-outline" size={22} color="#0284C7" />
+                      ) : (
+                        <FontAwesome5 name="hands-helping" size={18} color="#FFFFFF" />
+                      )}
+                    </View>
 
-          {/* ALERT CARD 2: ANITA DESAI, 54 (In Progress / Claimed) */}
-          <View style={[styles.alertCard, styles.alertCardInProgress]}>
-            {/* Top Right In Progress Badge */}
-            <View style={styles.inProgressBadge}>
-              <Ionicons
-                name="checkmark"
-                size={13}
-                color="#FFFFFF"
-                style={{ marginRight: 3 }}
-              />
-              <Text style={styles.inProgressBadgeText}>In Progress</Text>
-            </View>
+                    <View style={styles.alertInfoTextGroup}>
+                      <View style={styles.titleWithTimestampRow}>
+                        <Text style={styles.pilgrimName}>
+                          {item.pilgrim_name}
+                          {item.pilgrim_age ? `, ${item.pilgrim_age}` : ''}
+                        </Text>
+                        <Text style={[styles.timestampText, item.status === 'in_progress' && { marginRight: 85 }]}>
+                          {formatTimeAgo(item.created_at)}
+                        </Text>
+                      </View>
+                      <View style={styles.locationRow}>
+                        <Ionicons name="location-outline" size={13} color="#6B7280" />
+                        <Text style={styles.locationText}>
+                          {item.distance_away || '180m away'} · {item.location_name || 'Sector 1'}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
 
-            <View style={styles.alertCardHeader}>
-              <View style={styles.alertIconCircleBlue}>
-                <Ionicons name="water-outline" size={24} color="#0284C7" />
-              </View>
-              <View style={styles.alertInfoTextGroup}>
-                <View style={styles.titleWithTimestampRow}>
-                  <Text style={styles.pilgrimName}>Anita Desai, 54</Text>
-                  <Text style={[styles.timestampText, { marginRight: 85 }]}>5m ago</Text>
+                  {/* Distress Reason Box */}
+                  <View
+                    style={[
+                      styles.reasonBox,
+                      item.status === 'in_progress' && styles.reasonBoxBlue,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.reasonText,
+                        item.status === 'in_progress' && styles.reasonTextBlue,
+                      ]}
+                    >
+                      ⚠️ {item.problem_type}
+                      {item.description ? ` (${item.description})` : ''}
+                    </Text>
+                  </View>
+
+                  {/* Medical Context / Tags */}
+                  <View style={styles.tagsRow}>
+                    {item.medical_context && (
+                      <View style={styles.tagPill}>
+                        <Text style={styles.tagPillText}>🏥 {item.medical_context}</Text>
+                      </View>
+                    )}
+                    {item.dindi_name && (
+                      <View style={styles.tagPill}>
+                        <Text style={styles.tagPillText}>🚩 {item.dindi_name}</Text>
+                      </View>
+                    )}
+                  </View>
+
+                  {/* Primary Actions Based on Lifecycle State */}
+                  {isClaimedByMe ? (
+                    <View>
+                      <View style={styles.claimedByYouBanner}>
+                        <Ionicons name="shield-checkmark" size={14} color="#15803D" style={{ marginRight: 4 }} />
+                        <Text style={styles.claimedByYouBannerText}>Claimed by you</Text>
+                      </View>
+
+                      <View style={styles.claimedActionRow}>
+                        <TouchableOpacity
+                          activeOpacity={0.8}
+                          onPress={() => handleNavigate(item)}
+                          style={styles.claimedActionBtn}
+                        >
+                          <Ionicons name="navigate-outline" size={15} color="#0369A1" />
+                          <Text style={styles.claimedActionBtnText}>Navigate</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          activeOpacity={0.8}
+                          onPress={() => handleCall(item.pilgrim_phone, item.pilgrim_name)}
+                          style={styles.claimedActionBtn}
+                        >
+                          <Ionicons name="call-outline" size={15} color="#0369A1" />
+                          <Text style={styles.claimedActionBtnText}>Call</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          activeOpacity={0.8}
+                          onPress={() => handleResolve(item)}
+                          style={[styles.claimedActionBtn, styles.claimedResolveBtn]}
+                        >
+                          <Ionicons name="checkmark-done" size={15} color="#15803D" />
+                          <Text style={[styles.claimedActionBtnText, { color: '#15803D' }]}>
+                            Resolve
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ) : isClaimedByOther ? (
+                    <View style={styles.claimedByOtherBanner}>
+                      <Text style={styles.claimedByOtherBannerText}>
+                        Claimed by {item.responder_name || 'another responder'}
+                      </Text>
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      activeOpacity={0.85}
+                      onPress={() => handleRespond(item)}
+                      style={styles.respondNowButton}
+                    >
+                      <FontAwesome5
+                        name="running"
+                        size={15}
+                        color="#FFFFFF"
+                        style={{ marginRight: 8 }}
+                      />
+                      <Text style={styles.respondNowButtonText}>
+                        Respond Now · ~2 min walk
+                      </Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
-                <View style={styles.locationRow}>
-                  <Ionicons name="location-outline" size={13} color="#6B7280" />
-                  <Text style={styles.locationText}>50m away · Water Station 2</Text>
-                </View>
-              </View>
-            </View>
-
-            {/* Distress Reason */}
-            <View style={styles.reasonBoxBlue}>
-              <Text style={styles.reasonTextBlue}>
-                💧 Acute Dehydration & Heat Exhaustion
-              </Text>
-            </View>
-
-            {/* Tags */}
-            <View style={styles.tagsRow}>
-              <View style={styles.tagPillBlue}>
-                <Text style={styles.tagPillBlueText}>🩸 O+</Text>
-              </View>
-              <View style={styles.tagPillBlue}>
-                <Text style={styles.tagPillBlueText}>Dehydration</Text>
-              </View>
-              <View style={styles.tagPillBlue}>
-                <Text style={styles.tagPillBlueText}>🚩 Dindi #12</Text>
-              </View>
-            </View>
-
-            {/* Action Buttons for Claimed State */}
-            <View style={styles.claimedActionRow}>
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={() => {
-                  setSelectedMapPointId('med-1');
-                  setMapModalVisible(true);
-                }}
-                style={styles.claimedActionBtn}
-              >
-                <Ionicons name="navigate-outline" size={15} color="#0369A1" />
-                <Text style={styles.claimedActionBtnText}>Navigate (50m)</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={() => handleCall('Anita Desai')}
-                style={styles.claimedActionBtn}
-              >
-                <Ionicons name="call-outline" size={15} color="#0369A1" />
-                <Text style={styles.claimedActionBtnText}>Call Pilgrim</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          {/* ALERT CARD 3: SURESH PATIL, 62 (Mobility Assist) */}
-          <View style={[styles.alertCard, styles.alertCardMobility]}>
-            <View style={styles.alertCardHeader}>
-              <View style={styles.alertIconCircleAmber}>
-                <FontAwesome5 name="wheelchair" size={19} color="#FFFFFF" />
-              </View>
-              <View style={styles.alertInfoTextGroup}>
-                <View style={styles.titleWithTimestampRow}>
-                  <Text style={styles.pilgrimName}>Suresh Patil, 62</Text>
-                  <Text style={styles.timestampText}>14m ago</Text>
-                </View>
-                <View style={styles.locationRow}>
-                  <Ionicons name="location-outline" size={13} color="#6B7280" />
-                  <Text style={styles.locationText}>320m away · Rest Pavilion</Text>
-                </View>
-              </View>
-            </View>
-
-            {/* Distress Reason */}
-            <View style={styles.reasonBoxAmber}>
-              <Text style={styles.reasonTextAmber}>
-                ♿ Wheelchair Assistance Needed at Pavilion
-              </Text>
-            </View>
-
-            {/* Tags */}
-            <View style={styles.tagsRow}>
-              <View style={styles.tagPillAmber}>
-                <Text style={styles.tagPillAmberText}>Mobility Assist</Text>
-              </View>
-              <View style={styles.tagPillAmber}>
-                <Text style={styles.tagPillAmberText}>🩸 A+</Text>
-              </View>
-              <View style={styles.tagPillAmber}>
-                <Text style={styles.tagPillAmberText}>🚩 Dindi #01</Text>
-              </View>
-            </View>
-
-            {/* Primary Action Button */}
-            {claimedAlerts['alt-suresh'] ? (
-              <View style={styles.claimedByYouBanner}>
-                <Text style={styles.claimedByYouBannerText}>Claimed by you</Text>
-              </View>
-            ) : (
-              <TouchableOpacity
-                activeOpacity={0.85}
-                onPress={() => handleRespond('Suresh Patil', 'alt-suresh')}
-                style={styles.respondNowButton}
-              >
-                <FontAwesome5
-                  name="running"
-                  size={15}
-                  color="#FFFFFF"
-                  style={{ marginRight: 8 }}
-                />
-                <Text style={styles.respondNowButtonText}>Respond Now · ~4 min walk</Text>
-              </TouchableOpacity>
-            )}
-          </View>
+              );
+            })
+          )}
         </View>
 
         {/* 5. AREA OVERVIEW & MAP SECTION */}
@@ -343,6 +584,7 @@ export const VolunteerDashboardScreen: React.FC<
           <TouchableOpacity
             activeOpacity={0.75}
             onPress={() => {
+              setActiveClaimedRoute(null);
               setSelectedMapPointId(null);
               setMapModalVisible(true);
             }}
@@ -362,6 +604,7 @@ export const VolunteerDashboardScreen: React.FC<
         <View style={styles.mapPreviewWrapper}>
           <VarkariInteractiveMap
             isFullScreen={false}
+            claimedRoute={currentMapRoute}
             onExpand={() => {
               setSelectedMapPointId(null);
               setMapModalVisible(true);
@@ -376,7 +619,7 @@ export const VolunteerDashboardScreen: React.FC<
             </View>
             <View style={[styles.legendRow, { marginTop: 4 }]}>
               <View style={styles.legendDotRed} />
-              <Text style={styles.legendText}>3 Nearby Alerts</Text>
+              <Text style={styles.legendText}>{nearbyCount} Nearby Alerts</Text>
             </View>
           </View>
         </View>
@@ -412,11 +655,15 @@ export const VolunteerDashboardScreen: React.FC<
         </View>
       </ScrollView>
 
-      {/* Full Map Modal */}
+      {/* Full Map Modal with Route Navigation Line */}
       <VarkariMapModal
         visible={mapModalVisible}
-        onClose={() => setMapModalVisible(false)}
+        onClose={() => {
+          setMapModalVisible(false);
+          setActiveClaimedRoute(null);
+        }}
         initialPointId={selectedMapPointId}
+        claimedRoute={currentMapRoute}
       />
     </SafeAreaView>
   );
@@ -498,21 +745,22 @@ const styles = StyleSheet.create({
     fontWeight: typography.fontWeight.bold,
     color: colors.textSecondary,
     letterSpacing: 0.8,
+    marginBottom: 3,
   },
   volunteerName: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: typography.fontWeight.bold,
-    color: '#1C1B1F',
-    marginTop: 2,
+    color: '#1C1917',
+    marginBottom: 4,
   },
   sectorLocationRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 3,
   },
   sectorLocationText: {
     fontSize: 12,
     color: '#6B7280',
+    fontWeight: '500',
     marginLeft: 3,
   },
   dutyBadge: {
@@ -521,19 +769,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: 20,
-    borderWidth: 1,
   },
   dutyBadgeAvailable: {
     backgroundColor: '#DCFCE7',
-    borderColor: '#BBF7D0',
   },
   dutyBadgeBusy: {
     backgroundColor: '#FEF3C7',
-    borderColor: '#FDE68A',
   },
   dutyBadgeText: {
     fontSize: 13,
-    fontWeight: typography.fontWeight.bold,
+    fontWeight: '700',
   },
   dutyTextAvailable: {
     color: '#15803D',
@@ -545,79 +790,101 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 4,
     marginBottom: spacing.sm,
+    marginTop: spacing.xs,
   },
   sectionTitleWithDot: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
   },
   sectionHeading: {
-    fontSize: 21,
+    fontSize: 17,
     fontWeight: typography.fontWeight.bold,
-    color: '#1C1B1F',
+    color: '#1C1917',
+    marginRight: 8,
   },
   nearbyCountPill: {
-    backgroundColor: '#DC2626',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 14,
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
   },
   nearbyCountPillText: {
-    fontSize: 12,
-    fontWeight: typography.fontWeight.bold,
-    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#DC2626',
   },
   liveQueueSubtext: {
     fontSize: 12,
     color: '#6B7280',
-    fontWeight: typography.fontWeight.medium,
+    fontWeight: '500',
   },
   alertsContainer: {
-    gap: spacing.md,
+    gap: 12,
     marginBottom: spacing.lg,
+  },
+  emptyQueueCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#EFE8DE',
+  },
+  emptyQueueTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#15803D',
+    marginTop: 8,
+  },
+  emptyQueueSubtitle: {
+    fontSize: 13,
+    color: '#78716C',
+    textAlign: 'center',
+    marginTop: 4,
   },
   alertCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 22,
-    padding: 18,
+    borderRadius: 20,
+    padding: 16,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: '#F3E8E2',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 3,
     position: 'relative',
-    overflow: 'hidden',
   },
   alertCardCritical: {
-    borderLeftWidth: 4,
-    borderLeftColor: '#C2410C',
+    borderLeftWidth: 5,
+    borderLeftColor: '#DC2626',
   },
   alertCardInProgress: {
-    backgroundColor: '#F0F9FF',
-    borderColor: '#BAE6FD',
+    borderLeftWidth: 5,
+    borderLeftColor: '#0284C7',
+    backgroundColor: '#FBFDFF',
   },
   alertCardMobility: {
-    borderLeftWidth: 4,
-    borderLeftColor: '#854D0E',
+    borderLeftWidth: 5,
+    borderLeftColor: '#D97706',
   },
   inProgressBadge: {
     position: 'absolute',
-    top: 0,
-    right: 0,
-    backgroundColor: '#0284C7',
+    top: 14,
+    right: 14,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderBottomLeftRadius: 14,
+    backgroundColor: '#0284C7',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+    zIndex: 5,
   },
   inProgressBadgeText: {
-    fontSize: 12,
-    fontWeight: typography.fontWeight.bold,
+    fontSize: 11,
+    fontWeight: '700',
     color: '#FFFFFF',
   },
   alertCardHeader: {
@@ -625,32 +892,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 10,
   },
-  alertIconCircleRed: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#FEE2E2',
+  alertIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 14,
+    marginRight: 12,
+  },
+  alertIconCircleRed: {
+    backgroundColor: '#FEE2E2',
   },
   alertIconCircleBlue: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
     backgroundColor: '#E0F2FE',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 14,
   },
   alertIconCircleAmber: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#854D0E',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 14,
+    backgroundColor: '#D97706',
   },
   alertInfoTextGroup: {
     flex: 1,
@@ -661,237 +918,194 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   pilgrimName: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: typography.fontWeight.bold,
-    color: '#1C1B1F',
+    color: '#1C1917',
   },
   timestampText: {
     fontSize: 12,
     color: '#9CA3AF',
-    fontWeight: typography.fontWeight.medium,
+    fontWeight: '500',
   },
   locationRow: {
     flexDirection: 'row',
     alignItems: 'center',
     marginTop: 2,
-    gap: 3,
   },
   locationText: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#6B7280',
+    marginLeft: 3,
+    fontWeight: '500',
   },
   reasonBox: {
-    backgroundColor: '#FFF7ED',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
+    backgroundColor: '#FEF2F2',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
     marginBottom: 10,
+  },
+  reasonBoxBlue: {
+    backgroundColor: '#F0F9FF',
   },
   reasonText: {
     fontSize: 13,
-    color: '#9A3412',
-    fontWeight: typography.fontWeight.medium,
-  },
-  reasonBoxBlue: {
-    backgroundColor: '#E0F2FE',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    marginBottom: 10,
+    color: '#991B1B',
+    fontWeight: '600',
   },
   reasonTextBlue: {
-    fontSize: 13,
     color: '#0369A1',
-    fontWeight: typography.fontWeight.medium,
-  },
-  reasonBoxAmber: {
-    backgroundColor: '#FEF3C7',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    marginBottom: 10,
-  },
-  reasonTextAmber: {
-    fontSize: 13,
-    color: '#78350F',
-    fontWeight: typography.fontWeight.medium,
   },
   tagsRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 14,
+    gap: 6,
+    marginBottom: 12,
   },
   tagPill: {
-    backgroundColor: '#F5F5F4',
-    paddingHorizontal: 11,
-    paddingVertical: 5,
+    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
     borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#E7E5E4',
   },
   tagPillText: {
-    fontSize: 12,
-    fontWeight: typography.fontWeight.medium,
-    color: '#44403C',
-  },
-  tagPillBlue: {
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 11,
-    paddingVertical: 5,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#BAE6FD',
-  },
-  tagPillBlueText: {
-    fontSize: 12,
-    fontWeight: typography.fontWeight.medium,
-    color: '#0369A1',
-  },
-  tagPillAmber: {
-    backgroundColor: '#FEF3C7',
-    paddingHorizontal: 11,
-    paddingVertical: 5,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#FDE68A',
-  },
-  tagPillAmberText: {
-    fontSize: 12,
-    fontWeight: typography.fontWeight.medium,
-    color: '#78350F',
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#4B5563',
   },
   respondNowButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#8C4A00',
-    height: 48,
+    backgroundColor: '#DC2626',
+    paddingVertical: 12,
     borderRadius: 14,
-    shadowColor: '#8C4A00',
+    shadowColor: '#DC2626',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
+    shadowOpacity: 0.25,
     shadowRadius: 4,
-    elevation: 2,
+    elevation: 3,
   },
   respondNowButtonText: {
-    fontSize: 15,
-    fontWeight: typography.fontWeight.bold,
+    fontSize: 14,
+    fontWeight: '800',
     color: '#FFFFFF',
-    letterSpacing: 0.3,
+  },
+  claimedByYouBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#DCFCE7',
+    paddingVertical: 6,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  claimedByYouBannerText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#15803D',
+  },
+  claimedByOtherBanner: {
+    backgroundColor: '#F3F4F6',
+    paddingVertical: 8,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  claimedByOtherBannerText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6B7280',
   },
   claimedActionRow: {
     flexDirection: 'row',
-    gap: 10,
+    gap: 8,
   },
   claimedActionBtn: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    height: 46,
     backgroundColor: '#E0F2FE',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#BAE6FD',
-    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 12,
+    gap: 4,
+  },
+  claimedResolveBtn: {
+    backgroundColor: '#DCFCE7',
   },
   claimedActionBtnText: {
     fontSize: 13,
-    fontWeight: typography.fontWeight.bold,
-    color: '#0369A1',
-  },
-  claimedByYouBanner: {
-    height: 46,
-    backgroundColor: '#E0F2FE',
-    borderRadius: 14,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  claimedByYouBannerText: {
-    fontSize: 14,
-    fontWeight: typography.fontWeight.bold,
+    fontWeight: '700',
     color: '#0369A1',
   },
   areaHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.xs,
-    marginTop: 4,
+    alignItems: 'flex-end',
+    marginBottom: spacing.sm,
   },
   areaHeading: {
-    fontSize: 20,
+    fontSize: 17,
     fontWeight: typography.fontWeight.bold,
-    color: '#1C1B1F',
+    color: '#1C1917',
   },
   areaSubtext: {
     fontSize: 12,
     color: '#6B7280',
-    marginTop: 1,
+    marginTop: 2,
   },
   viewFullMapBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 4,
   },
   viewFullMapText: {
-    fontSize: 14,
-    fontWeight: typography.fontWeight.bold,
+    fontSize: 13,
+    fontWeight: '700',
     color: '#9A3412',
   },
   mapPreviewWrapper: {
-    height: 190,
-    borderRadius: 22,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    backgroundColor: '#FFFFFF',
     position: 'relative',
-    marginBottom: spacing.sm,
+    borderRadius: 20,
+    overflow: 'hidden',
+    marginBottom: 12,
   },
   mapLegendOverlay: {
     position: 'absolute',
-    top: 12,
+    bottom: 12,
     left: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
-    borderRadius: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.92)',
     paddingHorizontal: 10,
     paddingVertical: 6,
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 2,
+    borderColor: '#EFE5D8',
   },
   legendRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
   },
   legendDotGreen: {
     width: 8,
     height: 8,
     borderRadius: 4,
     backgroundColor: '#22C55E',
+    marginRight: 6,
   },
   legendDotRed: {
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#EF4444',
+    backgroundColor: '#DC2626',
+    marginRight: 6,
   },
   legendText: {
-    fontSize: 12,
-    fontWeight: typography.fontWeight.bold,
-    color: '#1C1B1F',
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#374151',
   },
   poiChipsRow: {
     flexDirection: 'row',
     gap: 8,
-    marginBottom: spacing.lg,
   },
   poiChip: {
     flex: 1,
@@ -899,24 +1113,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#FFFFFF',
-    paddingVertical: 8,
-    borderRadius: 12,
+    paddingVertical: 10,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: '#EFE8DE',
     gap: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.03,
-    shadowRadius: 2,
-    elevation: 1,
   },
   poiChipEmoji: {
-    fontSize: 13,
+    fontSize: 14,
   },
   poiChipText: {
     fontSize: 11,
-    fontWeight: typography.fontWeight.bold,
-    color: '#1C1B1F',
+    fontWeight: '700',
+    color: '#374151',
   },
 });
 

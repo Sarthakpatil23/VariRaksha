@@ -11,7 +11,7 @@ import {
   Linking,
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialIcons, FontAwesome5 } from '@expo/vector-icons';
 import { WebView } from 'react-native-webview';
 import {
   MapPoint,
@@ -32,11 +32,37 @@ export type MapCategoryFilter =
   | 'toilet'
   | 'religious';
 
+export interface ActiveSOSMapData {
+  id: string;
+  lat: number;
+  lng: number;
+  pilgrimName: string;
+  problemType: string;
+  status: 'nearby' | 'in_progress' | 'resolved';
+  responderName?: string;
+  responderPhone?: string;
+}
+
+export interface ClaimedRouteMapData {
+  volunteerLat: number;
+  volunteerLng: number;
+  sosLat: number;
+  sosLng: number;
+  pilgrimName?: string;
+  problemType?: string;
+  distance?: string;
+  eta?: string;
+}
+
 interface VarkariInteractiveMapProps {
   isFullScreen?: boolean;
   onClose?: () => void;
   onExpand?: () => void;
   initialSelectedId?: string | null;
+  activeSOS?: ActiveSOSMapData | null;
+  claimedRoute?: ClaimedRouteMapData | null;
+  onCallVolunteer?: (phone: string) => void;
+  onResolveSOS?: () => void;
 }
 
 export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
@@ -44,6 +70,10 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
   onClose,
   onExpand,
   initialSelectedId = null,
+  activeSOS = null,
+  claimedRoute = null,
+  onCallVolunteer,
+  onResolveSOS,
 }) => {
   const { t, i18n } = useTranslation();
   const lang = (i18n.language || 'mr') as 'mr' | 'hi' | 'en';
@@ -57,6 +87,16 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
       ? MAP_SERVICE_POINTS.find((p) => p.id === initialSelectedId) || null
       : null,
   );
+
+  const [simState, setSimState] = useState<{
+    remainingMeters: number;
+    etaText: string;
+    progressPercent: number;
+  }>({
+    remainingMeters: 180,
+    etaText: '~2 min walk',
+    progressPercent: 0,
+  });
 
   const webViewRef = useRef<WebView>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -115,6 +155,12 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
             }
           } else if (data && data.type === 'pilgrim_click') {
             showPilgrimAlert();
+          } else if (data && data.type === 'sim_progress') {
+            setSimState({
+              remainingMeters: data.remainingMeters,
+              etaText: data.etaText,
+              progressPercent: data.progressPercent,
+            });
           }
         } catch {
           // Ignore
@@ -144,7 +190,7 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
     );
   };
 
-  // Generate Base Leaflet Map HTML (Loaded once)
+  // Generate Base Leaflet Map HTML
   const generateLeafletHtml = () => {
     const pointsJson = JSON.stringify(
       MAP_SERVICE_POINTS.map((p) => ({
@@ -164,6 +210,9 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
     const activeRouteJson = JSON.stringify(WARI_ACTIVE_SEGMENT);
     const pilgrimLat = CURRENT_PILGRIM_LOCATION.lat;
     const pilgrimLng = CURRENT_PILGRIM_LOCATION.lng;
+
+    const activeSosJson = JSON.stringify(activeSOS);
+    const claimedRouteJson = JSON.stringify(claimedRoute);
 
     return `
 <!DOCTYPE html>
@@ -261,9 +310,126 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
       box-shadow: 0 2px 4px rgba(0,0,0,0.2);
     }
 
+    /* Emergency SOS Beacon Pulse Pin */
+    .sos-beacon-pin {
+      position: relative;
+      width: 56px;
+      height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transform: translate(-50%, -50%);
+    }
+    .sos-radar-ring {
+      position: absolute;
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      background: rgba(220, 38, 38, 0.5);
+      animation: sosPulse 1.4s infinite ease-out;
+    }
+    .sos-radar-ring-delay {
+      position: absolute;
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      background: rgba(220, 38, 38, 0.3);
+      animation: sosPulse 1.4s infinite 0.5s ease-out;
+    }
+    .sos-core {
+      position: relative;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: #DC2626;
+      border: 3px solid #FFFFFF;
+      box-shadow: 0 4px 10px rgba(220, 38, 38, 0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #FFF;
+      font-size: 15px;
+      font-weight: 900;
+      z-index: 6;
+    }
+    .sos-label {
+      position: absolute;
+      top: -20px;
+      background: #DC2626;
+      color: #FFF;
+      font-size: 11px;
+      font-weight: 900;
+      padding: 2px 8px;
+      border-radius: 10px;
+      white-space: nowrap;
+      box-shadow: 0 3px 6px rgba(0,0,0,0.3);
+    }
+
+    /* Moving Volunteer Tactical Pulse */
+    .volunteer-moving-pin {
+      position: relative;
+      width: 48px;
+      height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transform: translate(-50%, -50%);
+      transition: all 0.35s ease-out;
+    }
+    .vol-pulse-ring {
+      position: absolute;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: rgba(21, 128, 61, 0.45);
+      animation: radarPulse 1.6s infinite ease-out;
+    }
+    .vol-core {
+      position: relative;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #15803D 0%, #16A34A 100%);
+      border: 2.5px solid #FFFFFF;
+      box-shadow: 0 4px 10px rgba(22, 163, 74, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #FFF;
+      font-size: 14px;
+      z-index: 8;
+    }
+    .vol-status-badge {
+      position: absolute;
+      top: -24px;
+      background: #15803D;
+      color: #FFF;
+      font-size: 10px;
+      font-weight: 800;
+      padding: 2px 8px;
+      border-radius: 10px;
+      white-space: nowrap;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.25);
+      transition: background 0.3s;
+    }
+
+    /* Tactical Route Dash Animation */
+    .tactical-route {
+      stroke-dasharray: 8, 8;
+      animation: dashFlow 1.2s linear infinite;
+    }
+    @keyframes dashFlow {
+      from { stroke-dashoffset: 16; }
+      to { stroke-dashoffset: 0; }
+    }
+
     @keyframes radarPulse {
       0% { transform: scale(0.6); opacity: 0.9; }
       100% { transform: scale(1.9); opacity: 0; }
+    }
+    @keyframes sosPulse {
+      0% { transform: scale(0.6); opacity: 1; }
+      100% { transform: scale(2.2); opacity: 0; }
     }
   </style>
 </head>
@@ -364,6 +530,119 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
       notifyApp({ type: 'pilgrim_click' });
     });
 
+    // Handle Active SOS Beacon Marker
+    var activeSosData = ${activeSosJson};
+    var sosMarker = null;
+    if (activeSosData && activeSosData.lat && activeSosData.lng) {
+      var sosHtml = '<div class="sos-beacon-pin">' +
+        '<div class="sos-radar-ring"></div>' +
+        '<div class="sos-radar-ring-delay"></div>' +
+        '<div class="sos-label">🚨 SOS LOCATION</div>' +
+        '<div class="sos-core">🚨</div>' +
+        '</div>';
+
+      var sosIcon = L.divIcon({
+        className: '',
+        html: sosHtml,
+        iconSize: [56, 56],
+        iconAnchor: [28, 28]
+      });
+
+      sosMarker = L.marker([activeSosData.lat, activeSosData.lng], { icon: sosIcon, zIndexOffset: 1000 }).addTo(map);
+    }
+
+    // Handle Claimed Direct Tactical Route & LIVE APPROACHING SIMULATION
+    var claimedRouteData = ${claimedRouteJson};
+    var liveVolMarker = null;
+    var simulationInterval = null;
+    var navRoutePolyline = null;
+    var routeGlow = null;
+
+    if (claimedRouteData && claimedRouteData.volunteerLat && claimedRouteData.sosLat) {
+      var volStart = [claimedRouteData.volunteerLat, claimedRouteData.volunteerLng];
+      var sosTarget = [claimedRouteData.sosLat, claimedRouteData.sosLng];
+
+      // Route Glow
+      routeGlow = L.polyline([volStart, sosTarget], {
+        color: '#0284C7',
+        weight: 8,
+        opacity: 0.35,
+        lineCap: 'round'
+      }).addTo(map);
+
+      // Tactical Flowing Navigation Polyline
+      navRoutePolyline = L.polyline([volStart, sosTarget], {
+        color: '#0284C7',
+        weight: 4.5,
+        className: 'tactical-route',
+        lineCap: 'round'
+      }).addTo(map);
+
+      // Volunteer Moving Pin
+      var volHtml = '<div class="volunteer-moving-pin" id="vol-pin">' +
+        '<div class="vol-pulse-ring"></div>' +
+        '<div class="vol-status-badge" id="vol-hud">🏃 180m · ~2 min</div>' +
+        '<div class="vol-core">🧑‍🤝‍🧑</div>' +
+        '</div>';
+
+      var volDivIcon = L.divIcon({
+        className: '',
+        html: volHtml,
+        iconSize: [48, 48],
+        iconAnchor: [24, 24]
+      });
+
+      liveVolMarker = L.marker(volStart, { icon: volDivIcon, zIndexOffset: 950 }).addTo(map);
+      map.fitBounds([volStart, sosTarget], { padding: [60, 60] });
+
+      // SIMULATION OF VOLUNTEER APPROACHING THE SOS LOCATION IN REAL TIME
+      var totalSteps = 80;
+      var currentStep = 0;
+      var initialDist = 180;
+
+      simulationInterval = setInterval(function() {
+        currentStep = (currentStep + 1) % (totalSteps + 15);
+        var progress = Math.min(1.0, currentStep / totalSteps);
+
+        // Smooth position interpolation
+        var curLat = volStart[0] + (sosTarget[0] - volStart[0]) * progress;
+        var curLng = volStart[1] + (sosTarget[1] - volStart[1]) * progress;
+
+        if (liveVolMarker) {
+          liveVolMarker.setLatLng([curLat, curLng]);
+        }
+
+        var remainingMeters = Math.max(0, Math.round(initialDist * (1 - progress)));
+        var etaText = remainingMeters > 100 ? '~2 min walk' : remainingMeters > 40 ? '~1 min walk' : remainingMeters > 10 ? '< 30s' : 'Arrived!';
+        var badgeText = remainingMeters > 10 ? ('🏃 ' + remainingMeters + 'm · ' + etaText) : '🎯 Arrived at Pilgrim';
+
+        var hudEl = document.getElementById('vol-hud');
+        if (hudEl) {
+          hudEl.innerHTML = badgeText;
+          if (remainingMeters <= 10) {
+            hudEl.style.background = '#DC2626';
+          } else {
+            hudEl.style.background = '#15803D';
+          }
+        }
+
+        if (navRoutePolyline && routeGlow) {
+          navRoutePolyline.setLatLngs([[curLat, curLng], sosTarget]);
+          routeGlow.setLatLngs([[curLat, curLng], sosTarget]);
+        }
+
+        // Emit simulation progress back to React Native
+        notifyApp({
+          type: 'sim_progress',
+          remainingMeters: remainingMeters,
+          etaText: etaText,
+          progressPercent: Math.round(progress * 100)
+        });
+      }, 400);
+    } else if (activeSosData && activeSosData.lat && activeSosData.lng) {
+      map.setView([activeSosData.lat, activeSosData.lng], 16, { animate: true });
+    }
+
     // Service Markers Map
     var allPoints = ${pointsJson};
     var markerLayerGroup = L.layerGroup().addTo(map);
@@ -421,7 +700,13 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
         if (msg.action === 'filter_category') {
           renderMarkers(msg.category || 'all');
         } else if (msg.action === 'recenter') {
-          map.setView([${pilgrimLat}, ${pilgrimLng}], 15, { animate: true });
+          if (claimedRouteData) {
+            map.fitBounds([[claimedRouteData.volunteerLat, claimedRouteData.volunteerLng], [claimedRouteData.sosLat, claimedRouteData.sosLng]], { padding: [50, 50] });
+          } else if (activeSosData) {
+            map.setView([activeSosData.lat, activeSosData.lng], 16, { animate: true });
+          } else {
+            map.setView([${pilgrimLat}, ${pilgrimLng}], 15, { animate: true });
+          }
         } else if (msg.action === 'fit_route') {
           map.fitBounds(polyline.getBounds(), { padding: [35, 35] });
         } else if (msg.action === 'zoom_in') {
@@ -450,6 +735,12 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
         }
       } else if (data.type === 'pilgrim_click') {
         showPilgrimAlert();
+      } else if (data.type === 'sim_progress') {
+        setSimState({
+          remainingMeters: data.remainingMeters,
+          etaText: data.etaText,
+          progressPercent: data.progressPercent,
+        });
       }
     } catch {
       // Ignore
@@ -495,6 +786,8 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
     );
   };
 
+  const isEnRoute = Boolean(claimedRoute || (activeSOS && activeSOS.status === 'in_progress'));
+
   return (
     <View style={[styles.container, isFullScreen && styles.fullScreenContainer]}>
       {/* Map Header Controls when in Full Screen */}
@@ -510,10 +803,22 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
 
           <View style={styles.headerTitleBox}>
             <Text style={styles.headerTitleText}>
-              {isMarathi ? 'वारी पालखी मार्ग' : isHindi ? 'वारी पालकी मार्ग' : 'Wari Palkhi Route'}
+              {isEnRoute
+                ? '🚨 LIVE RESPONDER DISPATCH'
+                : activeSOS
+                ? '🚨 EMERGENCY SOS'
+                : isMarathi
+                ? 'वारी पालखी मार्ग'
+                : isHindi
+                ? 'वारी पालकी मार्ग'
+                : 'Wari Palkhi Route'}
             </Text>
             <Text style={styles.headerSubtitleText}>
-              {isMarathi
+              {isEnRoute
+                ? `Approaching · ${simState.remainingMeters}m left (${simState.etaText})`
+                : activeSOS
+                ? activeSOS.problemType
+                : isMarathi
                 ? CURRENT_PILGRIM_LOCATION.distanceToDestMr
                 : isHindi
                 ? CURRENT_PILGRIM_LOCATION.distanceToDestHi
@@ -531,8 +836,91 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
         </View>
       )}
 
-      {/* Category Filter Chips Strip (Available in Full Screen) */}
-      {isFullScreen && (
+      {/* LIVE TACTICAL DISPATCH HUD OVERLAY (Approaching Simulation Banner) */}
+      {isEnRoute && (
+        <View style={styles.tacticalHudBanner}>
+          <View style={styles.hudTopRow}>
+            <View style={styles.hudBadgeMoving}>
+              <View style={styles.pulseDotGreen} />
+              <Text style={styles.hudBadgeText}>
+                {simState.remainingMeters <= 10 ? 'ARRIVED ON SCENE' : 'EN ROUTE / APPROACHING'}
+              </Text>
+            </View>
+
+            <Text style={styles.hudDistanceText}>
+              {simState.remainingMeters <= 10
+                ? 'At Pilgrim Location'
+                : `${simState.remainingMeters}m (${simState.etaText})`}
+            </Text>
+          </View>
+
+          {/* Tactical Progress Bar */}
+          <View style={styles.progressBarBg}>
+            <View
+              style={[
+                styles.progressBarFill,
+                { width: `${Math.max(5, simState.progressPercent)}%` },
+              ]}
+            />
+          </View>
+
+          <View style={styles.hudBottomRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.hudSubtitle}>
+                {activeSOS?.responderName
+                  ? `Responder: ${activeSOS.responderName}`
+                  : claimedRoute?.pilgrimName
+                  ? `Navigating to: ${claimedRoute.pilgrimName}`
+                  : 'Responder assigned & moving towards incident'}
+              </Text>
+            </View>
+
+            {activeSOS?.responderPhone && (
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() =>
+                  onCallVolunteer
+                    ? onCallVolunteer(activeSOS.responderPhone!)
+                    : handleCall(activeSOS.responderPhone)
+                }
+                style={styles.hudCallBtn}
+              >
+                <Ionicons name="call" size={14} color="#FFFFFF" />
+                <Text style={styles.hudCallBtnText}>Call</Text>
+              </TouchableOpacity>
+            )}
+
+            {onResolveSOS && (
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={onResolveSOS}
+                style={styles.hudResolveBtn}
+              >
+                <Ionicons name="checkmark-done" size={14} color="#FFFFFF" />
+                <Text style={styles.hudResolveBtnText}>Resolve</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      )}
+
+      {/* SOS ACTIVE BANNER (When waiting for volunteer) */}
+      {activeSOS && activeSOS.status === 'nearby' && !isEnRoute && (
+        <View style={styles.sosStatusBannerWaiting}>
+          <View style={styles.sosBannerLeft}>
+            <Ionicons name="warning" size={20} color="#FFFFFF" />
+            <View style={{ marginLeft: 10, flex: 1 }}>
+              <Text style={styles.sosBannerTitle}>SOS ACTIVE · BROADCASTING</Text>
+              <Text style={styles.sosBannerSubtext}>
+                Help request sent · Waiting for nearby responder to claim...
+              </Text>
+            </View>
+          </View>
+        </View>
+      )}
+
+      {/* Category Filter Chips Strip (Available in Full Screen when not in SOS) */}
+      {isFullScreen && !activeSOS && !claimedRoute && (
         <View style={styles.filterStripContainer}>
           <ScrollView
             horizontal
@@ -628,42 +1016,6 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
                 🧑‍🤝‍🧑 {isMarathi ? 'मदतनीस' : 'Volunteers'}
               </Text>
             </TouchableOpacity>
-
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={() => setSelectedCategory('rest')}
-              style={[
-                styles.filterChip,
-                selectedCategory === 'rest' && styles.filterChipActive,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.filterChipText,
-                  selectedCategory === 'rest' && styles.filterChipTextActive,
-                ]}
-              >
-                ⛺ {isMarathi ? 'विश्रांती' : 'Rest'}
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={() => setSelectedCategory('toilet')}
-              style={[
-                styles.filterChip,
-                selectedCategory === 'toilet' && styles.filterChipActive,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.filterChipText,
-                  selectedCategory === 'toilet' && styles.filterChipTextActive,
-                ]}
-              >
-                🚻 {isMarathi ? 'स्वच्छतागृह' : 'Toilets'}
-              </Text>
-            </TouchableOpacity>
           </ScrollView>
         </View>
       )}
@@ -713,7 +1065,11 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
             <View style={styles.expandButtonPill}>
               <Ionicons name="expand" size={13} color={colors.surface} />
               <Text style={styles.expandButtonText}>
-                {isMarathi ? 'नकाशा उघडा' : isHindi ? 'नक्शा खोलें' : 'Open Map'}
+                {isEnRoute
+                  ? `Live Tactical (${simState.remainingMeters}m)`
+                  : isMarathi
+                  ? 'नकाशा उघडा'
+                  : 'Open Map'}
               </Text>
             </View>
           </TouchableOpacity>
@@ -761,11 +1117,10 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
         )}
       </View>
 
-      {/* Selected Marker Detail Card (Bottom Sheet Overlay in Full Screen) */}
+      {/* Selected Marker Detail Card */}
       {isFullScreen && selectedPoint && (
         <View style={styles.infoCardWrapper}>
           <View style={styles.infoCard}>
-            {/* Close card button */}
             <TouchableOpacity
               onPress={() => setSelectedPoint(null)}
               style={styles.cardCloseBtn}
@@ -773,7 +1128,6 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
               <Ionicons name="close" size={18} color={colors.textSecondary} />
             </TouchableOpacity>
 
-            {/* Header: Badge, Name, Distance */}
             <View style={styles.cardHeaderRow}>
               <View
                 style={[
@@ -791,75 +1145,57 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
                       ? 'restaurant'
                       : selectedPoint.iconType === 'volunteer'
                       ? 'people'
-                      : selectedPoint.iconType === 'rest'
-                      ? 'bed'
-                      : selectedPoint.iconType === 'toilet'
-                      ? 'body'
-                      : selectedPoint.iconType === 'religious'
-                      ? 'flame'
                       : 'flag'
                   }
-                  size={22}
+                  size={20}
                   color={colors.surface}
                 />
               </View>
 
-              <View style={styles.cardTitleInfo}>
-                <Text style={styles.cardTitleText}>
+              <View style={styles.cardHeaderCol}>
+                <Text style={styles.cardNameText} numberOfLines={2}>
                   {getLocalizedName(selectedPoint)}
                 </Text>
-                <Text style={styles.cardDistanceText}>
-                  📍 {getLocalizedDistance(selectedPoint)} · {getLocalizedWalkTime(selectedPoint)}
-                </Text>
+                <View style={styles.cardDistanceRow}>
+                  <Ionicons name="walk-outline" size={14} color={colors.maroon} />
+                  <Text style={styles.cardDistanceText}>
+                    {getLocalizedDistance(selectedPoint)} · {getLocalizedWalkTime(selectedPoint)}
+                  </Text>
+                </View>
               </View>
             </View>
 
-            {/* Status Line */}
-            <View style={styles.statusBox}>
-              <Text style={styles.statusBoxText}>
-                {getLocalizedStatus(selectedPoint)}
-              </Text>
-            </View>
-
-            {/* Description */}
+            <Text style={styles.cardStatusText}>
+              {getLocalizedStatus(selectedPoint)}
+            </Text>
             <Text style={styles.cardDescText}>
               {getLocalizedDesc(selectedPoint)}
             </Text>
 
-            {/* Available Services Badges */}
-            <View style={styles.servicesRow}>
-              {getLocalizedServices(selectedPoint).map((srv, idx) => (
-                <View key={idx} style={styles.serviceBadge}>
-                  <Text style={styles.serviceBadgeText}>✓ {srv}</Text>
-                </View>
-              ))}
-            </View>
-
-            {/* Action Buttons */}
             <View style={styles.cardActionsRow}>
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={() => handleDirections(selectedPoint)}
-                style={[styles.cardBtn, styles.cardBtnPrimary]}
-              >
-                <Ionicons name="navigate" size={16} color={colors.surface} />
-                <Text style={styles.cardBtnPrimaryText}>
-                  {isMarathi ? 'मार्गदर्शन' : isHindi ? 'दिशानिर्देश' : 'Get Directions'}
-                </Text>
-              </TouchableOpacity>
-
               {selectedPoint.phone && (
                 <TouchableOpacity
                   activeOpacity={0.8}
                   onPress={() => handleCall(selectedPoint.phone)}
-                  style={[styles.cardBtn, styles.cardBtnCall]}
+                  style={styles.cardCallBtn}
                 >
-                  <Ionicons name="call" size={16} color={colors.maroon} />
-                  <Text style={styles.cardBtnCallText}>
-                    {isMarathi ? 'कॉल करा' : isHindi ? 'कॉल करें' : 'Call'}
+                  <Ionicons name="call" size={16} color={colors.surface} />
+                  <Text style={styles.cardCallBtnText}>
+                    {isMarathi ? 'कॉल करा' : 'Call'}
                   </Text>
                 </TouchableOpacity>
               )}
+
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={() => handleDirections(selectedPoint)}
+                style={styles.cardDirectionsBtn}
+              >
+                <Ionicons name="navigate" size={16} color={colors.surface} />
+                <Text style={styles.cardDirectionsBtnText}>
+                  {isMarathi ? 'दिशा दर्शन' : 'Directions'}
+                </Text>
+              </TouchableOpacity>
             </View>
           </View>
         </View>
@@ -871,6 +1207,7 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
 const styles = StyleSheet.create({
   container: {
     width: '100%',
+    position: 'relative',
   },
   fullScreenContainer: {
     flex: 1,
@@ -881,45 +1218,167 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    paddingTop: spacing.xs,
+    paddingBottom: spacing.sm,
     backgroundColor: colors.surface,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
+    zIndex: 10,
   },
   closeBtn: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: colors.background,
-    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.05)',
     justifyContent: 'center',
+    alignItems: 'center',
   },
   headerTitleBox: {
+    flex: 1,
     alignItems: 'center',
+    marginHorizontal: spacing.sm,
   },
   headerTitleText: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: colors.text,
+    fontSize: 15,
+    fontWeight: typography.fontWeight.bold,
+    color: colors.maroon,
   },
   headerSubtitleText: {
-    fontSize: 12,
+    fontSize: 11,
+    color: '#0284C7',
+    marginTop: 1,
     fontWeight: '700',
-    color: colors.saffronDark,
   },
   recenterHeaderBtn: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#FFF3E0',
-    alignItems: 'center',
+    backgroundColor: 'rgba(230, 81, 0, 0.1)',
     justifyContent: 'center',
+    alignItems: 'center',
+  },
+  tacticalHudBanner: {
+    backgroundColor: '#0F172A',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1E293B',
+    zIndex: 10,
+  },
+  hudTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  hudBadgeMoving: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+  },
+  pulseDotGreen: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#22C55E',
+    marginRight: 6,
+  },
+  hudBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#22C55E',
+    letterSpacing: 0.5,
+  },
+  hudDistanceText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#F8FAFC',
+  },
+  progressBarBg: {
+    height: 4,
+    backgroundColor: '#334155',
+    borderRadius: 2,
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: '#38BDF8',
+    borderRadius: 2,
+  },
+  hudBottomRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  hudSubtitle: {
+    fontSize: 12,
+    color: '#94A3B8',
+    fontWeight: '500',
+  },
+  hudCallBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0284C7',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+    marginLeft: 8,
+    gap: 4,
+  },
+  hudCallBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  hudResolveBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#15803D',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+    marginLeft: 8,
+    gap: 4,
+  },
+  hudResolveBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  sosStatusBannerWaiting: {
+    backgroundColor: '#DC2626',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    zIndex: 10,
+  },
+  sosBannerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  sosBannerTitle: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#FFFFFF',
+  },
+  sosBannerSubtext: {
+    fontSize: 11,
+    color: '#FFFFFF',
+    opacity: 0.9,
+    marginTop: 1,
   },
   filterStripContainer: {
     backgroundColor: colors.surface,
-    paddingVertical: 8,
+    paddingVertical: 6,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
+    zIndex: 10,
   },
   filterScroll: {
     paddingHorizontal: spacing.md,
@@ -929,9 +1388,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 16,
-    backgroundColor: colors.background,
+    backgroundColor: '#F5EFEB',
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: '#E8DED4',
   },
   filterChipActive: {
     backgroundColor: colors.maroon,
@@ -939,28 +1398,30 @@ const styles = StyleSheet.create({
   },
   filterChipText: {
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: typography.fontWeight.bold,
     color: colors.textSecondary,
   },
   filterChipTextActive: {
-    color: colors.surface,
+    color: '#FFFFFF',
   },
   mapFrame: {
-    overflow: 'hidden',
     position: 'relative',
+    overflow: 'hidden',
   },
   mapFramePreview: {
-    height: 180,
+    height: 205,
     borderRadius: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
+    borderWidth: 1.5,
+    borderColor: '#EFE2D3',
+    backgroundColor: '#FFF8E7',
   },
   mapFrameFullScreen: {
     flex: 1,
+    backgroundColor: '#FFF8E7',
   },
   webView: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: '#FFF8E7',
   },
   previewClickableOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -972,170 +1433,148 @@ const styles = StyleSheet.create({
   expandButtonPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.maroon,
-    paddingHorizontal: 12,
+    backgroundColor: 'rgba(15, 23, 42, 0.88)',
+    paddingHorizontal: 10,
     paddingVertical: 6,
-    borderRadius: 20,
-    gap: 6,
-    shadowColor: '#000',
-    shadowOpacity: 0.25,
-    shadowRadius: 5,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 4,
+    borderRadius: 12,
+    gap: 4,
   },
   expandButtonText: {
     fontSize: 11,
-    fontWeight: '800',
-    color: colors.surface,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
   floatingControls: {
     position: 'absolute',
-    right: 12,
-    top: 12,
+    right: 14,
+    top: 14,
     gap: 8,
   },
   floatingBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: colors.surface,
-    alignItems: 'center',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
     justifyContent: 'center',
+    alignItems: 'center',
     shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.15,
     shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 3,
+    elevation: 4,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: '#EAE0D5',
   },
   infoCardWrapper: {
     position: 'absolute',
-    bottom: 12,
-    left: 12,
-    right: 12,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    padding: spacing.md,
+    zIndex: 20,
   },
   infoCard: {
-    backgroundColor: colors.surface,
-    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
     padding: spacing.md,
-    shadowColor: '#000',
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
+    shadowColor: colors.maroon,
     shadowOffset: { width: 0, height: 4 },
-    elevation: 5,
+    shadowOpacity: 0.18,
+    shadowRadius: 10,
+    elevation: 8,
     borderWidth: 1,
-    borderColor: colors.border,
-    position: 'relative',
+    borderColor: '#F3E5AB',
   },
   cardCloseBtn: {
     position: 'absolute',
-    top: 10,
-    right: 10,
-    padding: 6,
-    zIndex: 10,
+    top: 12,
+    right: 12,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#F5ECE1',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 5,
   },
   cardHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingRight: 24,
+    paddingRight: 32,
     marginBottom: 8,
   },
   cardIconBox: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    alignItems: 'center',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     justifyContent: 'center',
-    marginRight: 10,
-    shadowColor: '#000',
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
+    alignItems: 'center',
+    marginRight: 12,
   },
-  cardTitleInfo: {
+  cardHeaderCol: {
     flex: 1,
   },
-  cardTitleText: {
-    fontSize: 15,
-    fontWeight: '800',
+  cardNameText: {
+    fontSize: 16,
+    fontWeight: typography.fontWeight.bold,
     color: colors.text,
+  },
+  cardDistanceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+    gap: 4,
   },
   cardDistanceText: {
     fontSize: 12,
     fontWeight: '600',
     color: colors.maroon,
-    marginTop: 2,
   },
-  statusBox: {
-    backgroundColor: '#F3FBF4',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-    marginBottom: 6,
-  },
-  statusBoxText: {
-    fontSize: 11,
+  cardStatusText: {
+    fontSize: 12,
     fontWeight: '700',
-    color: colors.success,
+    color: colors.text,
+    marginBottom: 4,
   },
   cardDescText: {
-    fontSize: 12,
+    fontSize: 13,
     color: colors.textSecondary,
-    lineHeight: 16,
-    marginBottom: 8,
-  },
-  servicesRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
+    lineHeight: 18,
     marginBottom: 10,
-  },
-  serviceBadge: {
-    backgroundColor: '#FFF9ED',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#FFE0B2',
-  },
-  serviceBadgeText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#8D4004',
   },
   cardActionsRow: {
     flexDirection: 'row',
     gap: 8,
   },
-  cardBtn: {
+  cardCallBtn: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 8,
-    borderRadius: 10,
+    backgroundColor: colors.maroon,
+    paddingVertical: 10,
+    borderRadius: 12,
     gap: 6,
   },
-  cardBtnPrimary: {
-    flex: 1,
+  cardCallBtnText: {
+    fontSize: 14,
+    fontWeight: typography.fontWeight.bold,
+    color: '#FFFFFF',
+  },
+  cardDirectionsBtn: {
+    flex: 1.5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: colors.saffronDark,
+    paddingVertical: 10,
+    borderRadius: 12,
+    gap: 6,
   },
-  cardBtnPrimaryText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: colors.surface,
-  },
-  cardBtnCall: {
-    paddingHorizontal: 14,
-    backgroundColor: '#FFF0F5',
-    borderWidth: 1,
-    borderColor: '#F8BBD0',
-  },
-  cardBtnCallText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: colors.maroon,
+  cardDirectionsBtnText: {
+    fontSize: 14,
+    fontWeight: typography.fontWeight.bold,
+    color: '#FFFFFF',
   },
 });
 
