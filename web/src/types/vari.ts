@@ -23,6 +23,12 @@ export interface Vari {
 // Workspace tabs (Varkari, Volunteer, Medical Staff - Dindi Leader is global)
 export type SheetTab = 'varkari' | 'volunteer' | 'medical_staff';
 
+export type Gender = 'Male' | 'Female' | 'Other';
+export type BloodGroup = 'A+' | 'A-' | 'B+' | 'B-' | 'AB+' | 'AB-' | 'O+' | 'O-';
+
+export const BLOOD_GROUPS: BloodGroup[] = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
+export const GENDERS: Gender[] = ['Male', 'Female', 'Other'];
+
 export interface EmergencyContact {
   id?: string;
   actor_id?: string;
@@ -38,6 +44,9 @@ export interface BaseActorRecord {
   vari_id: string;
   full_name: string;
   mobile_number: string;
+  age?: number | null;
+  gender?: Gender | string | null;
+  blood_group?: BloodGroup | string | null;
   medical_conditions?: string | null;
   allergies?: string | null;
   village: string;
@@ -48,16 +57,21 @@ export interface BaseActorRecord {
 
 export interface VarkariRecord extends BaseActorRecord {
   emergency_card_id?: string | null;
-  blood_group?: string | null;
 }
 
-export interface VolunteerRecord extends BaseActorRecord {}
+export interface VolunteerRecord extends BaseActorRecord {
+  assigned_sector?: string | null;
+  duty_type?: string | null;
+}
 
 export interface MedicalStaffRecord extends BaseActorRecord {
   specialization: string;
 }
 
 export interface DindiLeaderProfile extends BaseActorRecord {
+  dindi_name?: string | null;
+  palkhi_route?: string | null;
+  total_pilgrims?: number | null;
   vari?: Vari;
   varkari_count?: number;
 }

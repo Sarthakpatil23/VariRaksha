@@ -108,7 +108,7 @@ export const verifyPhoneOTP = async (
 };
 
 /**
- * Query vari_varkaris table in PostgreSQL to find registered Varkari by phone number
+ * Query database to find registered Varkari / Dindi Leader by phone number
  */
 export const fetchRegisteredActorByPhone = async (
   mobileNumber: string,
@@ -125,34 +125,15 @@ export const fetchRegisteredActorByPhone = async (
   console.log(`[AuthService] Fetching from database for phone: ${tenDigit} (Role: ${role})...`);
 
   try {
-    // 1. PRIMARY LOOKUP: Query public.vari_varkaris table by matching mobile_number
+    // 1. PRIMARY LOOKUP: Query public.vari_varkaris table safely using * with vari join
     const { data: varkariRows, error: varkariErr } = await supabase
       .from('vari_varkaris')
-      .select(`
-        id,
-        vari_id,
-        full_name,
-        mobile_number,
-        village,
-        medical_conditions,
-        allergies,
-        emergency_card_id,
-        blood_group,
-        dindi_number,
-        vari:vari_id (
-          id,
-          vari_number,
-          dindi_leader_name,
-          start_point,
-          destination,
-          status
-        )
-      `)
+      .select('*, vari:vari_id(*)')
       .ilike('mobile_number', `%${tenDigit}%`)
       .limit(1);
 
     if (!varkariErr && varkariRows && varkariRows.length > 0) {
-      const row = varkariRows[0];
+      const row: any = varkariRows[0];
       const variInfo: any = row.vari;
 
       const medicalArr =
@@ -166,6 +147,14 @@ export const fetchRegisteredActorByPhone = async (
 
       const startPt = variInfo?.start_point || 'Dehu';
       const dindiNum = row.dindi_number || (variInfo ? variInfo.vari_number.replace(/[^0-9]/g, '') : '12');
+
+      const inferredGender =
+        row.gender ||
+        (row.full_name?.toLowerCase().includes('bai') ||
+        row.full_name?.toLowerCase().includes('tai') ||
+        row.full_name?.toLowerCase().includes('sonal')
+          ? 'Female'
+          : 'Male');
 
       const result: RegisteredVarkariProfile = {
         id: row.id,
@@ -181,39 +170,23 @@ export const fetchRegisteredActorByPhone = async (
         medicalConditions: medicalArr,
         allergies: allergiesArr,
         role: 'varkari',
-        gender: 'Male',
-        age: 62,
+        gender: inferredGender,
+        age: row.age || 58,
       };
 
-      console.log('[AuthService] Successfully extracted from vari_varkaris:', result.fullName);
+      console.log('[AuthService] Successfully extracted from vari_varkaris:', result.fullName, 'Age:', result.age, 'Gender:', result.gender, 'Blood:', result.bloodGroup);
       return result;
     }
 
     // 2. SECONDARY LOOKUP: Query public.vari_dindi_malaks (Dindi Leaders)
     const { data: leaderRows, error: leaderErr } = await supabase
       .from('vari_dindi_malaks')
-      .select(`
-        id,
-        vari_id,
-        full_name,
-        mobile_number,
-        village,
-        medical_conditions,
-        allergies,
-        dindi_name,
-        vari:vari_id (
-          id,
-          vari_number,
-          dindi_leader_name,
-          start_point,
-          destination
-        )
-      `)
+      .select('*, vari:vari_id(*)')
       .ilike('mobile_number', `%${tenDigit}%`)
       .limit(1);
 
     if (!leaderErr && leaderRows && leaderRows.length > 0) {
-      const row = leaderRows[0];
+      const row: any = leaderRows[0];
       const variInfo: any = row.vari;
 
       const medicalArr =
@@ -225,6 +198,12 @@ export const fetchRegisteredActorByPhone = async (
           ? [row.allergies]
           : [];
 
+      const inferredGender =
+        row.gender ||
+        (row.full_name?.toLowerCase().includes('bai') || row.full_name?.toLowerCase().includes('tai')
+          ? 'Female'
+          : 'Male');
+
       const result: RegisteredVarkariProfile = {
         id: row.id,
         variId: row.vari_id,
@@ -235,19 +214,45 @@ export const fetchRegisteredActorByPhone = async (
         dindiNumber: variInfo ? variInfo.vari_number.replace(/[^0-9]/g, '') : '01',
         dindiLeaderName: row.full_name,
         emergencyCardId: `DL-${tenDigit.slice(-4)}`,
-        bloodGroup: 'B+',
+        bloodGroup: row.blood_group || 'B+',
         medicalConditions: medicalArr,
         allergies: allergiesArr,
         role: 'dindiLeader',
-        gender: 'Male',
-        age: 58,
+        gender: inferredGender,
+        age: row.age || 58,
       };
 
       console.log('[AuthService] Successfully extracted from vari_dindi_malaks:', result.fullName);
       return result;
     }
 
-    // 3. TERTIARY LOOKUP: Query public.profiles
+    // 3. TERTIARY LOOKUP: Query public.vari_volunteers
+    const { data: volunteerRows } = await supabase
+      .from('vari_volunteers')
+      .select('*')
+      .ilike('mobile_number', `%${tenDigit}%`)
+      .limit(1);
+
+    if (volunteerRows && volunteerRows.length > 0) {
+      const row: any = volunteerRows[0];
+      return {
+        id: row.id,
+        fullName: row.full_name,
+        mobileNumber: row.mobile_number || `+91 ${tenDigit}`,
+        village: row.village || 'महाराष्ट्र',
+        dindiName: 'वारी सेवा पथक (Volunteer)',
+        dindiNumber: '01',
+        emergencyCardId: `VL-${tenDigit.slice(-4)}`,
+        bloodGroup: row.blood_group || 'O+',
+        medicalConditions: [],
+        allergies: [],
+        role: 'volunteer',
+        gender: row.gender || 'Male',
+        age: row.age || 26,
+      };
+    }
+
+    // 4. QUATERNARY LOOKUP: Query public.profiles
     const { data: profileRows } = await supabase
       .from('profiles')
       .select('*')
@@ -255,13 +260,13 @@ export const fetchRegisteredActorByPhone = async (
       .limit(1);
 
     if (profileRows && profileRows.length > 0) {
-      const p = profileRows[0];
+      const p: any = profileRows[0];
       return {
         id: p.id,
         fullName: p.full_name || 'वारकरी भाविक',
         mobileNumber: p.mobile_number || `+91 ${tenDigit}`,
         emergencyCardId: p.emergency_card_id || `VK-${tenDigit.slice(-6)}`,
-        bloodGroup: 'O+',
+        bloodGroup: p.blood_group || 'B+',
         medicalConditions: [],
         allergies: [],
         dindiName: 'संत ज्ञानेश्वर माऊली दिंडी क्र. १२',
@@ -282,29 +287,37 @@ export const fetchRegisteredActorByPhone = async (
 };
 
 /**
- * Register a new Varkari on-the-fly into vari_varkaris
+ * Register a new Varkari on-the-fly into vari_varkaris with graceful fallback
  */
 export const registerNewVarkariProfile = async (
   mobileNumber: string,
   fullName: string = 'वारकरी भाविक',
   role: UserRole = 'varkari',
+  age: number = 55,
+  gender: string = 'Male',
+  bloodGroup: string = 'B+',
 ): Promise<RegisteredVarkariProfile> => {
   const tenDigit = mobileNumber.replace(/[^0-9]/g, '').slice(-10);
   const formattedMobile = `+91 ${tenDigit}`;
   const emergencyCardId = `VK-${tenDigit.slice(-6)}`;
 
-  try {
-    const newRecord = {
-      full_name: fullName,
-      mobile_number: formattedMobile,
-      village: 'महाराष्ट्र (Maharashtra)',
-      blood_group: 'B+',
-      emergency_card_id: emergencyCardId,
-      medical_conditions: 'None',
-      allergies: 'None',
-    };
+  const newRecord: any = {
+    full_name: fullName,
+    mobile_number: formattedMobile,
+    village: 'महाराष्ट्र (Maharashtra)',
+    blood_group: bloodGroup,
+    emergency_card_id: emergencyCardId,
+    medical_conditions: 'None',
+    allergies: 'None',
+  };
 
-    await supabase.from('vari_varkaris').insert([newRecord]);
+  try {
+    // Attempt insert with age & gender
+    const { error } = await supabase.from('vari_varkaris').insert([{ ...newRecord, age, gender }]);
+    if (error && error.message?.includes('column')) {
+      // Fallback without age/gender if columns not created yet in DB
+      await supabase.from('vari_varkaris').insert([newRecord]);
+    }
     console.log('[AuthService] Registered new Varkari into database:', fullName, formattedMobile);
   } catch (err) {
     console.warn('[AuthService] Error inserting new varkari into vari_varkaris:', err);
@@ -318,11 +331,11 @@ export const registerNewVarkariProfile = async (
     dindiName: 'संत ज्ञानेश्वर माऊली दिंडी क्र. १२',
     dindiNumber: '12',
     emergencyCardId,
-    bloodGroup: 'B+',
+    bloodGroup,
     medicalConditions: [],
     allergies: [],
     role,
-    gender: 'Male',
-    age: 50,
+    gender,
+    age,
   };
 };

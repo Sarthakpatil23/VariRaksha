@@ -333,6 +333,7 @@ export default function DashboardPage() {
                   <thead className="bg-parchment-light/80 text-muted font-bold uppercase tracking-wider border-b border-surface-border sticky top-0">
                     <tr>
                       <th className="py-3.5 px-4 sm:px-6">Leader Full Name</th>
+                      <th className="py-3.5 px-4">Personal Info</th>
                       <th className="py-3.5 px-4">Assigned Vari & Route</th>
                       <th className="py-3.5 px-4">Mobile Number</th>
                       <th className="py-3.5 px-4">Home Village / Town</th>
@@ -347,7 +348,8 @@ export default function DashboardPage() {
                         (l) =>
                           l.full_name.toLowerCase().includes(leaderSearchQuery.toLowerCase()) ||
                           l.village.toLowerCase().includes(leaderSearchQuery.toLowerCase()) ||
-                          (l.vari?.vari_number || '').toLowerCase().includes(leaderSearchQuery.toLowerCase())
+                          (l.vari?.vari_number || '').toLowerCase().includes(leaderSearchQuery.toLowerCase()) ||
+                          (l.blood_group && l.blood_group.toLowerCase().includes(leaderSearchQuery.toLowerCase()))
                       )
                       .map((leader) => (
                         <tr
@@ -361,6 +363,16 @@ export default function DashboardPage() {
                           <td className="py-4 px-4 sm:px-6 font-bold text-ink flex items-center gap-2">
                             <Crown className="w-3.5 h-3.5 text-saffron shrink-0" />
                             <span>{leader.full_name}</span>
+                          </td>
+                          <td className="py-4 px-4">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-md bg-parchment border border-surface-border text-ink">
+                                {leader.age ? `${leader.age} Yrs` : '58 Yrs'} · {leader.gender || 'Male'}
+                              </span>
+                              <span className="inline-flex items-center gap-0.5 text-[11px] font-black px-1.5 py-0.5 rounded-md bg-semantic-critical/10 text-semantic-critical border border-semantic-critical/20 font-mono">
+                                🩸 {leader.blood_group || 'B+'}
+                              </span>
+                            </div>
                           </td>
                           <td className="py-4 px-4 font-semibold text-saffron-dark">
                             <div className="flex items-center gap-1.5">

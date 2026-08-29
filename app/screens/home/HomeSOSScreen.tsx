@@ -20,6 +20,8 @@ import { VariRakshaChatbot } from '../../components/chat/VariRakshaChatbot';
 import { VoiceBlobModal } from '../../components/blob/VoiceBlobModal';
 import { VarkariInteractiveMap } from '../../components/map/VarkariInteractiveMap';
 import { VarkariMapModal } from '../../components/map/VarkariMapModal';
+import { useUserProfile } from '../../lib/userStore';
+import { translateUserProfile } from '../../utils/translator';
 
 // Mock Temperature Data & Threshold
 const MOCK_TEMPERATURE_NUMERIC = 34; // 34°C
@@ -28,7 +30,25 @@ const HEAT_RISK_THRESHOLD = 30; // Temperature threshold in °C to trigger heat 
 export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
   navigation,
 }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const lang = (i18n.language || 'mr') as 'mr' | 'hi' | 'en';
+  const rawProfile = useUserProfile();
+  const activeProfile = rawProfile
+    ? translateUserProfile(rawProfile, lang)
+    : {
+        fullName: lang === 'mr' ? 'सार्थक कैलास पाटील' : lang === 'hi' ? 'सार्थक कैलाश पाटिल' : 'Sarthak Kailas Patil',
+        mobileNumber: '+91 99708 32199',
+        village: lang === 'mr' ? 'पुणे' : 'Pune',
+        dindiName: lang === 'mr' ? 'श्री संत तुकाराम महाराज पालखी दिंडी' : 'Sant Tukaram Maharaj Palkhi Dindi',
+        dindiNumber: '01',
+        emergencyCardId: 'VK-DEHU01',
+        bloodGroup: 'B+',
+        medicalConditions: [lang === 'mr' ? 'रक्तदाब (बीपी)' : 'BP'],
+        allergies: [lang === 'mr' ? 'शेंगदाणे ॲलर्जी' : 'Peanut'],
+        role: 'varkari' as const,
+        gender: 'Male',
+        age: 62,
+      };
   const [isHolding, setIsHolding] = useState<boolean>(false);
   const [holdPercent, setHoldPercent] = useState<number>(0);
   const [chatModalVisible, setChatModalVisible] = useState<boolean>(false);
@@ -508,40 +528,50 @@ export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
                 </View>
 
                 <View style={styles.medicalPilgrimDetails}>
-                  <Text style={styles.medicalPilgrimName}>Tukaram Patil</Text>
-                  <Text style={styles.medicalPilgrimSub}>Age: 58 · Male · Dindi #12</Text>
+                  <Text style={styles.medicalPilgrimName}>{activeProfile.fullName}</Text>
+                  <Text style={styles.medicalPilgrimSub}>
+                    {lang === 'mr' ? `वय: ${activeProfile.age || 62} · पुरुष · दिंडी क्र. ${activeProfile.dindiNumber || '०१'}` : lang === 'hi' ? `उम्र: ${activeProfile.age || 62} · पुरुष · दिंडी सं. ${activeProfile.dindiNumber || '०१'}` : `Age: ${activeProfile.age || 62} · Male · Dindi #${activeProfile.dindiNumber || '01'}`}
+                  </Text>
                   <View style={styles.bloodBadge}>
                     <Ionicons name="water" size={16} color="#D32F2F" />
-                    <Text style={styles.bloodBadgeText}>Blood Group: O+ (Positive)</Text>
+                    <Text style={styles.bloodBadgeText}>
+                      {lang === 'mr' ? `रक्तगट: ${activeProfile.bloodGroup || 'B+'}` : lang === 'hi' ? `रक्त समूह: ${activeProfile.bloodGroup || 'B+'}` : `Blood Group: ${activeProfile.bloodGroup || 'B+'}`}
+                    </Text>
                   </View>
                 </View>
               </View>
 
               {/* Critical Health Parameters */}
               <View style={styles.medicalSectionCard}>
-                <Text style={styles.medicalSectionTitle}>CRITICAL HEALTH DATA</Text>
+                <Text style={styles.medicalSectionTitle}>
+                  {lang === 'mr' ? 'वैद्यकीय माहिती (HEALTH DATA)' : lang === 'hi' ? 'चिकित्सा विवरण (HEALTH DATA)' : 'CRITICAL HEALTH DATA'}
+                </Text>
 
                 <View style={styles.medicalItemRow}>
                   <Ionicons name="alert-circle-outline" size={18} color="#D32F2F" />
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.medicalItemLabel}>Allergies</Text>
-                    <Text style={styles.medicalItemValue}>Penicillin, Dust</Text>
+                    <Text style={styles.medicalItemLabel}>{lang === 'mr' ? 'ॲलर्जी' : lang === 'hi' ? 'एलर्जी' : 'Allergies'}</Text>
+                    <Text style={styles.medicalItemValue}>
+                      {activeProfile.allergies && activeProfile.allergies.length > 0 ? activeProfile.allergies.join(', ') : (lang === 'mr' ? 'काहीही नाही' : 'None')}
+                    </Text>
                   </View>
                 </View>
 
                 <View style={styles.medicalItemRow}>
                   <Ionicons name="heart-outline" size={18} color="#E65100" />
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.medicalItemLabel}>Chronic Conditions</Text>
-                    <Text style={styles.medicalItemValue}>Mild Hypertension (BP), Knee Arthritis</Text>
+                    <Text style={styles.medicalItemLabel}>{lang === 'mr' ? 'आरोग्य स्थिती' : lang === 'hi' ? 'स्वास्थ्य स्थिति' : 'Chronic Conditions'}</Text>
+                    <Text style={styles.medicalItemValue}>
+                      {activeProfile.medicalConditions && activeProfile.medicalConditions.length > 0 ? activeProfile.medicalConditions.join(', ') : (lang === 'mr' ? 'कोणतीही गंभीर व्याधी नाही' : 'None')}
+                    </Text>
                   </View>
                 </View>
 
                 <View style={styles.medicalItemRow}>
-                  <Ionicons name="fitness-outline" size={18} color="#2E7D32" />
+                  <Ionicons name="location-outline" size={18} color="#2E7D32" />
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.medicalItemLabel}>Daily Medications</Text>
-                    <Text style={styles.medicalItemValue}>Amlodipine 5mg (Morning after breakfast)</Text>
+                    <Text style={styles.medicalItemLabel}>{lang === 'mr' ? 'गाव / तालुका' : lang === 'hi' ? 'गांव / स्थान' : 'Village / Location'}</Text>
+                    <Text style={styles.medicalItemValue}>{activeProfile.village || (lang === 'mr' ? 'महाराष्ट्र' : 'Maharashtra')}</Text>
                   </View>
                 </View>
               </View>

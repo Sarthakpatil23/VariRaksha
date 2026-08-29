@@ -17,6 +17,8 @@ import {
   PhoneCall,
   Lock,
   Crown,
+  Droplet,
+  Calendar,
 } from 'lucide-react';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { ActorFormModal } from '@/components/dashboard/ActorFormModal';
@@ -120,13 +122,11 @@ export default function VariWorkspacePage() {
 
   useEffect(() => {
     fetchVari();
-  }, [fetchVari]);
-
-  useEffect(() => {
     fetchAllSheets();
-  }, [fetchAllSheets]);
+  }, [fetchVari, fetchAllSheets]);
 
-  // Derived Dindi Context
+  // Derived Dindi Details
+  const dindiNumber = vari?.vari_number || 'Vari 01';
   const dindiNameMap: Record<string, string> = {
     Dehu: 'Sant Tukaram Maharaj Palkhi Dindi',
     Alandi: 'Sant Dnyaneshwar Maharaj Palkhi Dindi',
@@ -138,115 +138,142 @@ export default function VariWorkspacePage() {
     Murtijapur: 'Sant Gadge Maharaj Palkhi Dindi',
   };
   const dindiName = vari ? dindiNameMap[vari.start_point] || `${vari.start_point} Palkhi Dindi` : 'Palkhi Dindi';
-  const dindiNumber = vari?.vari_number || 'Vari 01';
 
-  // Handle Form Success
-  const handleFormSuccess = (savedRecord: ActorRecord, isEdit: boolean) => {
+  // Handle Actor Form Success
+  const handleActorSuccess = (savedActor: ActorRecord, isEdit: boolean) => {
+    fetchAllSheets();
+  };
+
+  // Handle Actor Delete Success
+  const handleActorDeleteSuccess = (deletedId: string) => {
     if (activeTab === 'varkari') {
-      const rec = savedRecord as VarkariRecord;
-      setVarkaris((prev) => (isEdit ? prev.map((r) => (r.id === rec.id ? rec : r)) : [rec, ...prev]));
+      setVarkaris((prev) => prev.filter((r) => r.id !== deletedId));
     } else if (activeTab === 'volunteer') {
-      const rec = savedRecord as VolunteerRecord;
-      setVolunteers((prev) => (isEdit ? prev.map((r) => (r.id === rec.id ? rec : r)) : [rec, ...prev]));
+      setVolunteers((prev) => prev.filter((r) => r.id !== deletedId));
     } else if (activeTab === 'medical_staff') {
-      const rec = savedRecord as MedicalStaffRecord;
-      setMedicalStaff((prev) => (isEdit ? prev.map((r) => (r.id === rec.id ? rec : r)) : [rec, ...prev]));
+      setMedicalStaff((prev) => prev.filter((r) => r.id !== deletedId));
     }
   };
 
-  // Handle Delete Success
-  const handleDeleteSuccess = (deletedId: string) => {
-    if (activeTab === 'varkari') setVarkaris((prev) => prev.filter((r) => r.id !== deletedId));
-    if (activeTab === 'volunteer') setVolunteers((prev) => prev.filter((r) => r.id !== deletedId));
-    if (activeTab === 'medical_staff') setMedicalStaff((prev) => prev.filter((r) => r.id !== deletedId));
-  };
-
-  // 3 Workspace Tabs (Dindi Leader moved to Global Admin Dashboard)
+  // Tab definitions
   const tabs = [
-    { id: 'varkari' as SheetTab, label: 'Varkari', icon: Users, count: varkaris.length },
-    { id: 'volunteer' as SheetTab, label: 'Volunteer', icon: HeartHandshake, count: volunteers.length },
-    { id: 'medical_staff' as SheetTab, label: 'Medical Staff', icon: Stethoscope, count: medicalStaff.length },
+    {
+      id: 'varkari' as SheetTab,
+      label: 'Varkaris',
+      count: varkaris.length,
+      icon: Users,
+      color: 'saffron',
+    },
+    {
+      id: 'volunteer' as SheetTab,
+      label: 'Volunteers',
+      count: volunteers.length,
+      icon: HeartHandshake,
+      color: 'ocean',
+    },
+    {
+      id: 'medical_staff' as SheetTab,
+      label: 'Medical Staff',
+      count: medicalStaff.length,
+      icon: Stethoscope,
+      color: 'forest',
+    },
   ];
 
-  if (loadingVari || !vari) {
+  if (loadingVari && !vari) {
     return (
       <div className="min-h-screen bg-parchment flex flex-col">
-        <DashboardHeader backHref="/dashboard" />
+        <DashboardHeader />
         <div className="flex-1 flex items-center justify-center">
-          <div className="w-8 h-8 border-2 border-saffron border-t-transparent rounded-full animate-spin" />
+          <div className="flex flex-col items-center gap-3">
+            <RefreshCw className="w-8 h-8 animate-spin text-saffron" />
+            <span className="text-sm font-semibold text-muted">Opening Pilgrimage Workspace...</span>
+          </div>
         </div>
       </div>
     );
   }
 
-  return (
-    <div className="min-h-screen bg-parchment flex flex-col selection:bg-saffron selection:text-surface-white">
-      {/* Top Header */}
-      <DashboardHeader backHref="/dashboard" backLabel="All Varis" />
+  if (!vari) return null;
 
-      {/* Main Workspace */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-8 lg:px-12 py-8 w-full flex-1 flex flex-col">
-        {/* Scoped Vari Context Card */}
-        <div className="bg-surface-white border border-surface-border rounded-3xl p-6 sm:p-8 shadow-sm mb-6">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-            <div>
-              <div className="flex items-center gap-2.5 mb-2">
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-parchment-light border border-surface-border text-xs font-bold uppercase tracking-wider text-saffron-dark font-sans shadow-2xs">
-                  <Shield className="w-3.5 h-3.5" />
-                  <span>{vari.vari_number}</span>
-                </span>
-                <span className="text-xs font-bold uppercase tracking-widest text-muted">
-                  Vari Management Workspace
-                </span>
+  return (
+    <div className="min-h-screen bg-parchment flex flex-col">
+      <DashboardHeader />
+
+      {/* Main Workspace Layout */}
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 flex flex-col gap-6">
+        {/* =========================================================================
+            HEADER & WORKSPACE CONTEXT BAR
+        ========================================================================= */}
+        <div className="bg-surface-white border border-surface-border rounded-3xl p-6 sm:p-7 shadow-xs">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
+            {/* Left: Dindi Identity */}
+            <div className="flex items-start gap-4">
+              <div className="w-14 h-14 rounded-2xl bg-saffron/10 border border-saffron/20 flex items-center justify-center text-saffron-dark shrink-0 shadow-xs">
+                <FileSpreadsheet className="w-7 h-7" />
               </div>
 
-              <h1 className="text-3xl sm:text-4xl font-extrabold text-ink tracking-tight flex items-center gap-3">
-                <span>{vari.start_point}</span>
-                <span className="text-saffron">→</span>
-                <span>{vari.destination}</span>
-              </h1>
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-saffron/10 text-saffron-dark text-[11px] font-bold tracking-wider uppercase font-mono">
+                    <Shield className="w-3 h-3" />
+                    <span>{dindiNumber}</span>
+                  </span>
+                  <span className="text-xs font-semibold text-muted">•</span>
+                  <span className="text-xs font-bold text-muted uppercase tracking-wider">
+                    {vari.start_point} → {vari.destination}
+                  </span>
+                </div>
 
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-xs sm:text-sm text-ink-soft">
-                <span className="flex items-center gap-1.5 font-bold text-ink">
-                  <Crown className="w-4 h-4 text-saffron" />
-                  <span>Dindi Leader: {vari.dindi_leader_name}</span>
-                </span>
-                <span className="text-surface-border hidden sm:inline">•</span>
-                <span className="text-muted">
-                  {vari.start_point === 'Dehu'
-                    ? 'Sant Tukaram Maharaj Palkhi Marg'
-                    : 'Sant Dnyaneshwar Maharaj Palkhi Marg'}
-                </span>
+                <h1 className="text-xl sm:text-2xl font-extrabold text-ink tracking-tight">
+                  {dindiName}
+                </h1>
+                <p className="text-xs text-muted mt-0.5">
+                  Leader: <span className="font-bold text-ink">{vari.dindi_leader_name}</span> · Centralized Data Registry
+                </p>
               </div>
             </div>
 
-            {/* Total Registered Counter */}
-            <div className="flex items-center gap-3">
-              <div className="px-4 py-3 rounded-2xl bg-parchment-light/80 border border-surface-border flex items-center gap-4 shadow-2xs">
-                <div className="text-right">
-                  <div className="text-[10px] uppercase font-bold text-muted tracking-wider">
-                    Total In Vari
-                  </div>
-                  <div className="text-2xl font-extrabold text-ink">
-                    {varkaris.length + volunteers.length + medicalStaff.length + 1}
-                  </div>
+            {/* Right: Quick Stats */}
+            <div className="flex items-center gap-2 sm:gap-3 flex-wrap lg:justify-end">
+              <div className="px-3.5 py-2 rounded-xl bg-parchment-light border border-surface-border flex items-center gap-2 text-xs">
+                <Users className="w-4 h-4 text-saffron" />
+                <div>
+                  <div className="text-[10px] uppercase font-bold text-muted">Varkaris</div>
+                  <div className="font-extrabold text-ink font-mono">{varkaris.length}</div>
                 </div>
-                <div className="w-10 h-10 rounded-xl bg-saffron/10 text-saffron flex items-center justify-center">
-                  <FileSpreadsheet className="w-5 h-5" />
+              </div>
+
+              <div className="px-3.5 py-2 rounded-xl bg-parchment-light border border-surface-border flex items-center gap-2 text-xs">
+                <HeartHandshake className="w-4 h-4 text-ocean" />
+                <div>
+                  <div className="text-[10px] uppercase font-bold text-muted">Volunteers</div>
+                  <div className="font-extrabold text-ink font-mono">{volunteers.length}</div>
+                </div>
+              </div>
+
+              <div className="px-3.5 py-2 rounded-xl bg-parchment-light border border-surface-border flex items-center gap-2 text-xs">
+                <Stethoscope className="w-4 h-4 text-forest" />
+                <div>
+                  <div className="text-[10px] uppercase font-bold text-muted">Med Staff</div>
+                  <div className="font-extrabold text-ink font-mono">{medicalStaff.length}</div>
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Spreadsheet-Inspired Navigation & Table Container */}
-        <div className="bg-surface-white border border-surface-border rounded-3xl shadow-sm overflow-hidden flex-1 flex flex-col">
-          {/* Sheet Navigation Tabs Bar (3 Tabs) */}
-          <div className="bg-parchment-light/60 border-b border-surface-border px-4 sm:px-6 pt-3 flex items-center justify-between overflow-x-auto">
-            <div className="flex items-center gap-2">
+        {/* =========================================================================
+            ACTOR SHEETS TABS & TABLE WORKSPACE
+        ========================================================================= */}
+        <div className="bg-surface-white border border-surface-border rounded-3xl shadow-xs overflow-hidden flex flex-col flex-1">
+          {/* Tab Navigation */}
+          <div className="border-b border-surface-border bg-parchment-light/60 px-4 sm:px-6 pt-3 flex items-center justify-between gap-4 overflow-x-auto">
+            <div className="flex items-center gap-1 sm:gap-2">
               {tabs.map((tab) => {
                 const Icon = tab.icon;
                 const isActive = activeTab === tab.id;
+
                 return (
                   <button
                     key={tab.id}
@@ -294,7 +321,7 @@ export default function VariWorkspacePage() {
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder={`Search ${tabs.find((t) => t.id === activeTab)?.label} records...`}
+                placeholder={`Search ${tabs.find((t) => t.id === activeTab)?.label} by name, village, blood group...`}
                 className="w-full bg-parchment-light/50 border border-surface-border focus:border-saffron rounded-xl pl-10 pr-4 py-2.5 text-xs sm:text-sm text-ink placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-saffron/20 transition-all"
               />
             </div>
@@ -335,6 +362,7 @@ export default function VariWorkspacePage() {
                       <thead className="bg-parchment-light/80 text-muted font-bold uppercase tracking-wider border-b border-surface-border sticky top-0">
                         <tr>
                           <th className="py-3.5 px-4 sm:px-6">Full Name</th>
+                          <th className="py-3.5 px-4">Personal Details</th>
                           <th className="py-3.5 px-4">Mobile Number</th>
                           <th className="py-3.5 px-4">Medical Conditions</th>
                           <th className="py-3.5 px-4">Allergies</th>
@@ -349,11 +377,30 @@ export default function VariWorkspacePage() {
                           .filter(
                             (r) =>
                               r.full_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                              r.village.toLowerCase().includes(searchQuery.toLowerCase())
+                              r.village.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                              (r.blood_group && r.blood_group.toLowerCase().includes(searchQuery.toLowerCase())) ||
+                              (r.gender && r.gender.toLowerCase().includes(searchQuery.toLowerCase()))
                           )
                           .map((row) => (
                             <tr key={row.id} className="hover:bg-parchment-light/40 transition-colors">
-                              <td className="py-3.5 px-4 sm:px-6 font-bold text-ink">{row.full_name}</td>
+                              <td className="py-3.5 px-4 sm:px-6 font-bold text-ink">
+                                <div>{row.full_name}</div>
+                                {row.emergency_card_id && (
+                                  <div className="text-[10px] font-mono text-saffron-dark font-semibold">
+                                    ID: {row.emergency_card_id}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="py-3.5 px-4">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-md bg-parchment border border-surface-border text-ink">
+                                    {row.age ? `${row.age} Yrs` : '58 Yrs'} · {row.gender || 'Male'}
+                                  </span>
+                                  <span className="inline-flex items-center gap-0.5 text-[11px] font-black px-1.5 py-0.5 rounded-md bg-semantic-critical/10 text-semantic-critical border border-semantic-critical/20 font-mono">
+                                    🩸 {row.blood_group || 'B+'}
+                                  </span>
+                                </div>
+                              </td>
                               <td className="py-3.5 px-4 text-muted font-mono">{row.mobile_number}</td>
                               <td className="py-3.5 px-4">
                                 <span className={row.medical_conditions !== 'None' ? 'text-semantic-critical font-semibold' : 'text-muted'}>
@@ -426,6 +473,7 @@ export default function VariWorkspacePage() {
                       <thead className="bg-parchment-light/80 text-muted font-bold uppercase tracking-wider border-b border-surface-border sticky top-0">
                         <tr>
                           <th className="py-3.5 px-4 sm:px-6">Full Name</th>
+                          <th className="py-3.5 px-4">Personal Details</th>
                           <th className="py-3.5 px-4">Mobile Number</th>
                           <th className="py-3.5 px-4">Medical Conditions</th>
                           <th className="py-3.5 px-4">Allergies</th>
@@ -440,11 +488,22 @@ export default function VariWorkspacePage() {
                           .filter(
                             (r) =>
                               r.full_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                              r.village.toLowerCase().includes(searchQuery.toLowerCase())
+                              r.village.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                              (r.blood_group && r.blood_group.toLowerCase().includes(searchQuery.toLowerCase()))
                           )
                           .map((row) => (
                             <tr key={row.id} className="hover:bg-parchment-light/40 transition-colors">
                               <td className="py-3.5 px-4 sm:px-6 font-bold text-ink">{row.full_name}</td>
+                              <td className="py-3.5 px-4">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-md bg-parchment border border-surface-border text-ink">
+                                    {row.age ? `${row.age} Yrs` : '26 Yrs'} · {row.gender || 'Male'}
+                                  </span>
+                                  <span className="inline-flex items-center gap-0.5 text-[11px] font-black px-1.5 py-0.5 rounded-md bg-semantic-critical/10 text-semantic-critical border border-semantic-critical/20 font-mono">
+                                    🩸 {row.blood_group || 'O+'}
+                                  </span>
+                                </div>
+                              </td>
                               <td className="py-3.5 px-4 text-muted font-mono">{row.mobile_number}</td>
                               <td className="py-3.5 px-4 text-muted">{row.medical_conditions || 'None'}</td>
                               <td className="py-3.5 px-4 text-muted">{row.allergies || 'None'}</td>
@@ -499,6 +558,7 @@ export default function VariWorkspacePage() {
                       <thead className="bg-parchment-light/80 text-muted font-bold uppercase tracking-wider border-b border-surface-border sticky top-0">
                         <tr>
                           <th className="py-3.5 px-4 sm:px-6">Full Name</th>
+                          <th className="py-3.5 px-4">Personal Details</th>
                           <th className="py-3.5 px-4">Mobile Number</th>
                           <th className="py-3.5 px-4">Medical Specialization</th>
                           <th className="py-3.5 px-4">Medical Conditions</th>
@@ -515,14 +575,25 @@ export default function VariWorkspacePage() {
                             (r) =>
                               r.full_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                               r.village.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                              r.specialization.toLowerCase().includes(searchQuery.toLowerCase())
+                              r.specialization.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                              (r.blood_group && r.blood_group.toLowerCase().includes(searchQuery.toLowerCase()))
                           )
                           .map((row) => (
                             <tr key={row.id} className="hover:bg-parchment-light/40 transition-colors">
                               <td className="py-3.5 px-4 sm:px-6 font-bold text-ink">{row.full_name}</td>
+                              <td className="py-3.5 px-4">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-md bg-parchment border border-surface-border text-ink">
+                                    {row.age ? `${row.age} Yrs` : '34 Yrs'} · {row.gender || 'Male'}
+                                  </span>
+                                  <span className="inline-flex items-center gap-0.5 text-[11px] font-black px-1.5 py-0.5 rounded-md bg-semantic-critical/10 text-semantic-critical border border-semantic-critical/20 font-mono">
+                                    🩸 {row.blood_group || 'A+'}
+                                  </span>
+                                </div>
+                              </td>
                               <td className="py-3.5 px-4 text-muted font-mono">{row.mobile_number}</td>
                               <td className="py-3.5 px-4">
-                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-semantic-critical/10 text-semantic-critical font-bold text-xs">
+                                <span className="inline-flex items-center gap-1 font-bold text-semantic-critical bg-semantic-critical/10 px-2.5 py-1 rounded-lg">
                                   <Stethoscope className="w-3 h-3" />
                                   <span>{row.specialization}</span>
                                 </span>
@@ -570,73 +641,78 @@ export default function VariWorkspacePage() {
         </div>
       </main>
 
-      {/* Actor Entry & Edit Modal */}
-      <ActorFormModal
-        isOpen={formModalOpen}
-        activeTab={activeTab}
-        vari={vari}
-        editingRecord={editingRecord}
-        onClose={() => {
-          setFormModalOpen(false);
-          setEditingRecord(null);
-        }}
-        onSuccess={handleFormSuccess}
-      />
+      {/* MODALS */}
+      {formModalOpen && (
+        <ActorFormModal
+          isOpen={formModalOpen}
+          activeTab={activeTab}
+          vari={vari}
+          editingRecord={editingRecord}
+          onClose={() => {
+            setFormModalOpen(false);
+            setEditingRecord(null);
+          }}
+          onSuccess={handleActorSuccess}
+        />
+      )}
 
-      {/* Delete Record Confirmation Modal */}
-      <DeleteActorModal
-        isOpen={deleteModalOpen}
-        activeTab={activeTab}
-        record={deletingRecord}
-        onClose={() => {
-          setDeleteModalOpen(false);
-          setDeletingRecord(null);
-        }}
-        onSuccess={handleDeleteSuccess}
-      />
+      {deleteModalOpen && deletingRecord && (
+        <DeleteActorModal
+          isOpen={deleteModalOpen}
+          activeTab={activeTab}
+          record={deletingRecord}
+          onClose={() => {
+            setDeleteModalOpen(false);
+            setDeletingRecord(null);
+          }}
+          onSuccess={handleActorDeleteSuccess}
+        />
+      )}
     </div>
   );
 }
 
-// Compact Emergency Contacts Cell
+// Emergency Contacts cell renderer
 function EmergencyContactsCell({ contacts }: { contacts?: EmergencyContact[] }) {
   if (!contacts || contacts.length === 0) {
-    return <span className="text-muted text-xs">—</span>;
+    return <span className="text-muted/60 text-[11px]">No contacts</span>;
   }
 
   return (
-    <div className="flex flex-col gap-1 py-0.5">
+    <div className="space-y-1">
       {contacts.map((c, i) => (
-        <div key={i} className="flex items-center gap-1.5 text-[11px] leading-tight">
-          <PhoneCall className="w-2.5 h-2.5 text-saffron shrink-0" />
-          <span className="font-bold text-ink">{c.name}:</span>
-          <span className="font-mono text-muted">{c.phone_number}</span>
+        <div key={i} className="flex items-center gap-1.5 text-[11px]">
+          <span className="font-semibold text-ink">{c.name}:</span>
+          <a
+            href={`tel:${c.phone_number.replace(/\s+/g, '')}`}
+            className="text-saffron-dark font-mono hover:underline inline-flex items-center gap-0.5"
+          >
+            <PhoneCall className="w-2.5 h-2.5 text-saffron" />
+            <span>{c.phone_number}</span>
+          </a>
         </div>
       ))}
     </div>
   );
 }
 
-// Clean Empty State for Active Sheet
+// Empty state renderer
 function EmptySheetView({ role, onAdd }: { role: string; onAdd: () => void }) {
   return (
-    <div className="py-24 px-6 flex flex-col items-center justify-center text-center">
-      <div className="w-14 h-14 rounded-2xl bg-parchment-light border border-surface-border text-saffron flex items-center justify-center mb-4 shadow-2xs">
-        <FileSpreadsheet className="w-6 h-6" />
+    <div className="py-20 flex flex-col items-center justify-center text-center px-4">
+      <div className="w-12 h-12 rounded-2xl bg-parchment-light flex items-center justify-center text-muted mb-3">
+        <Users className="w-6 h-6" />
       </div>
-      <h3 className="text-lg font-extrabold text-ink tracking-tight mb-1">
-        No {role} records logged
-      </h3>
-      <p className="text-xs text-muted max-w-sm mb-6 leading-relaxed">
-        This sheet is currently empty for this Vari. Add the first {role.toLowerCase()} to populate
-        records with emergency contact info and auto-linked Dindi context.
+      <h3 className="text-sm font-bold text-ink mb-1">No {role}s Registered Yet</h3>
+      <p className="text-xs text-muted max-w-xs mb-4">
+        Add the first {role.toLowerCase()} record to link them directly with this Dindi.
       </p>
       <button
         onClick={onAdd}
-        className="inline-flex items-center gap-2 bg-saffron hover:bg-saffron-dark text-surface-white font-semibold text-xs px-5 py-2.5 rounded-xl shadow-saffron transition-all transform hover:-translate-y-0.5"
+        className="inline-flex items-center gap-1.5 bg-saffron hover:bg-saffron-dark text-surface-white font-bold text-xs px-4 py-2 rounded-xl shadow-saffron transition-all"
       >
         <Plus className="w-3.5 h-3.5" />
-        <span>Add First {role}</span>
+        <span>Add {role}</span>
       </button>
     </div>
   );

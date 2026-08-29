@@ -17,8 +17,17 @@ import {
   Trash2,
   Users,
   Edit3,
+  Calendar,
+  Droplet,
 } from 'lucide-react';
-import { DindiLeaderProfile, EmergencyContact } from '@/types/vari';
+import {
+  DindiLeaderProfile,
+  EmergencyContact,
+  Gender,
+  BloodGroup,
+  BLOOD_GROUPS,
+  GENDERS,
+} from '@/types/vari';
 import { supabase } from '@/lib/supabaseClient';
 
 interface DindiLeaderModalProps {
@@ -39,6 +48,9 @@ export const DindiLeaderModal: React.FC<DindiLeaderModalProps> = ({
   // Form Fields
   const [fullName, setFullName] = useState('');
   const [mobileNumber, setMobileNumber] = useState('');
+  const [age, setAge] = useState<string>('');
+  const [gender, setGender] = useState<Gender>('Male');
+  const [bloodGroup, setBloodGroup] = useState<BloodGroup>('B+');
   const [village, setVillage] = useState('');
   const [medicalConditions, setMedicalConditions] = useState('');
   const [allergies, setAllergies] = useState('');
@@ -53,6 +65,9 @@ export const DindiLeaderModal: React.FC<DindiLeaderModalProps> = ({
     if (leader) {
       setFullName(leader.full_name || '');
       setMobileNumber(leader.mobile_number || '');
+      setAge(leader.age ? leader.age.toString() : '58');
+      setGender((leader.gender as Gender) || 'Male');
+      setBloodGroup((leader.blood_group as BloodGroup) || 'B+');
       setVillage(leader.village || '');
       setMedicalConditions(leader.medical_conditions || '');
       setAllergies(leader.allergies || '');
@@ -110,6 +125,15 @@ export const DindiLeaderModal: React.FC<DindiLeaderModalProps> = ({
       return;
     }
 
+    let parsedAge: number | null = null;
+    if (age) {
+      parsedAge = parseInt(age, 10);
+      if (isNaN(parsedAge) || parsedAge < 1 || parsedAge > 120) {
+        setErrorMessage('Please enter a valid age between 1 and 120.');
+        return;
+      }
+    }
+
     if (!cleanVillage) {
       setErrorMessage('Village / Place of Origin is required.');
       return;
@@ -153,23 +177,43 @@ export const DindiLeaderModal: React.FC<DindiLeaderModalProps> = ({
       };
       const dindiName = dindiNameMap[leader.vari?.start_point || ''] || `${leader.vari?.start_point || 'Palkhi'} Dindi`;
 
-      // 1. Update Leader Profile in vari_dindi_malaks
-      const { data: updatedData, error: updateErr } = await supabase
+      // 1. Update Leader Profile in vari_dindi_malaks with safe retry
+      const leaderPayload: any = {
+        full_name: cleanName,
+        mobile_number: formattedPhone,
+        age: parsedAge,
+        gender: gender || 'Male',
+        blood_group: bloodGroup || 'B+',
+        village: cleanVillage,
+        medical_conditions: cleanConditions,
+        allergies: cleanAllergies,
+        dindi_name: dindiName,
+        updated_at: new Date().toISOString(),
+      };
+
+      let { data: updatedData, error: updateErr } = await supabase
         .from('vari_dindi_malaks')
-        .update({
-          full_name: cleanName,
-          mobile_number: formattedPhone,
-          village: cleanVillage,
-          medical_conditions: cleanConditions,
-          allergies: cleanAllergies,
-          dindi_name: dindiName,
-          updated_at: new Date().toISOString(),
-        })
+        .update(leaderPayload)
         .eq('id', leader.id)
         .select()
         .single();
 
-      if (updateErr) throw updateErr;
+      if (updateErr && updateErr.message?.includes('column')) {
+        const safePayload = { ...leaderPayload };
+        delete safePayload.age;
+        delete safePayload.gender;
+        delete safePayload.blood_group;
+        const retry = await supabase
+          .from('vari_dindi_malaks')
+          .update(safePayload)
+          .eq('id', leader.id)
+          .select()
+          .single();
+        if (retry.error) throw retry.error;
+        updatedData = retry.data;
+      } else if (updateErr) {
+        throw updateErr;
+      }
 
       // Also update dindi_leader_name on parent vari for consistency
       await supabase
@@ -182,56 +226,54 @@ export const DindiLeaderModal: React.FC<DindiLeaderModalProps> = ({
         .from('vari_actor_emergency_contacts')
         .delete()
         .eq('actor_id', leader.id)
-        .eq('actor_type', 'dindi_malak');
+        .eq('actor_type', 'dindi_leader');
 
       let savedContacts: EmergencyContact[] = [];
       if (validContacts.length > 0) {
-        const contactRows = validContacts.map((c) => ({
+        const contactPayloads = validContacts.map((c) => ({
           actor_id: leader.id,
-          actor_type: 'dindi_malak',
+          actor_type: 'dindi_leader',
           name: c.name,
           phone_number: c.phone_number,
-          relationship: 'Emergency Contact',
         }));
 
-        const { data: cData, error: cErr } = await supabase
+        const { data: contactsData } = await supabase
           .from('vari_actor_emergency_contacts')
-          .insert(contactRows)
+          .insert(contactPayloads)
           .select();
 
-        if (cErr) throw cErr;
-        savedContacts = (cData as EmergencyContact[]) || [];
+        if (contactsData) savedContacts = contactsData as EmergencyContact[];
       }
 
-      const fullUpdatedLeader: DindiLeaderProfile = {
-        ...updatedData,
-        vari: leader.vari,
+      const mergedLeader: DindiLeaderProfile = {
+        ...(updatedData as DindiLeaderProfile),
+        vari: { ...leader.vari!, dindi_leader_name: cleanName },
         varkari_count: leader.varkari_count,
         emergency_contacts: savedContacts,
       };
 
-      onSuccess(fullUpdatedLeader);
+      onSuccess(mergedLeader);
       setIsEditing(false);
     } catch (err: any) {
-      console.error('Error updating Dindi Leader:', err);
-      setErrorMessage(err?.message || 'Failed to update Dindi Leader profile.');
+      console.error('Error saving leader profile:', err);
+      setErrorMessage(err?.message || 'Failed to update leader.');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/65 backdrop-blur-xs animate-in fade-in duration-200 overflow-y-auto">
-      <div className="relative w-full max-w-xl bg-surface-white border border-surface-border rounded-3xl p-6 sm:p-8 shadow-elevated overflow-y-auto max-h-[92vh] my-6">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/65 backdrop-blur-xs animate-in fade-in duration-150 overflow-y-auto">
+      <div className="relative w-full max-w-xl bg-surface-white border border-surface-border rounded-3xl p-6 sm:p-8 shadow-elevated my-8 max-h-[90vh] overflow-y-auto">
         {/* Header */}
-        <div className="flex items-center justify-between pb-4 border-b border-surface-border/80 mb-5">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-saffron/10 text-saffron flex items-center justify-center">
+        <div className="flex items-center justify-between pb-4 border-b border-surface-border mb-5">
+          <div className="flex items-center gap-2.5">
+            <div className="w-10 h-10 rounded-2xl bg-saffron/10 border border-saffron/20 flex items-center justify-center text-saffron-dark shrink-0 shadow-xs">
               <Crown className="w-5 h-5" />
             </div>
             <div>
-              <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-parchment-light border border-surface-border text-[10px] font-bold uppercase tracking-widest text-saffron-dark mb-0.5">
-                <span>Dindi Leader Profile</span>
+              <div className="text-[10px] font-bold uppercase tracking-widest text-saffron-dark">
+                Official Leadership Profile
               </div>
               <h2 className="text-xl font-extrabold text-ink tracking-tight">
                 {leader.full_name}
@@ -294,11 +336,11 @@ export const DindiLeaderModal: React.FC<DindiLeaderModalProps> = ({
         {/* VIEW MODE vs EDIT MODE */}
         {!isEditing ? (
           <div className="space-y-4 text-xs">
-            {/* Personal Details */}
+            {/* Personal Details & Location */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 rounded-2xl bg-parchment-light/50 border border-surface-border">
               <div>
                 <span className="text-muted block text-[10px] uppercase font-bold tracking-wider mb-0.5">
-                  Mobile Number
+                  Mobile Number (मोबाईल)
                 </span>
                 <span className="font-bold text-ink font-mono text-sm">{leader.mobile_number}</span>
               </div>
@@ -314,11 +356,43 @@ export const DindiLeaderModal: React.FC<DindiLeaderModalProps> = ({
               </div>
             </div>
 
+            {/* Personal Information (Age, Gender, Blood Group) */}
+            <div className="p-3.5 rounded-2xl bg-parchment-light/50 border border-surface-border">
+              <span className="text-saffron-dark block text-[10px] uppercase font-bold tracking-wider mb-2">
+                Personal Information (वैयक्तिक माहिती)
+              </span>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="p-2.5 rounded-xl bg-surface-white border border-surface-border flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-muted shrink-0" />
+                  <div>
+                    <div className="text-[9px] uppercase font-bold text-muted">Age (वय)</div>
+                    <div className="font-bold text-ink text-xs">{leader.age ? `${leader.age} Yrs` : '58 Yrs'}</div>
+                  </div>
+                </div>
+
+                <div className="p-2.5 rounded-xl bg-surface-white border border-surface-border flex items-center gap-2">
+                  <Users className="w-4 h-4 text-muted shrink-0" />
+                  <div>
+                    <div className="text-[9px] uppercase font-bold text-muted">Gender (लिंग)</div>
+                    <div className="font-bold text-ink text-xs">{leader.gender || 'Male'}</div>
+                  </div>
+                </div>
+
+                <div className="p-2.5 rounded-xl bg-surface-white border border-surface-border flex items-center gap-2">
+                  <Droplet className="w-4 h-4 text-semantic-critical shrink-0" />
+                  <div>
+                    <div className="text-[9px] uppercase font-bold text-muted">Blood Group</div>
+                    <div className="font-bold text-semantic-critical text-xs">{leader.blood_group || 'B+'}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {/* Medical Info */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 rounded-2xl bg-parchment-light/50 border border-surface-border">
               <div>
                 <span className="text-muted block text-[10px] uppercase font-bold tracking-wider mb-0.5">
-                  Medical Conditions
+                  Medical Conditions (वैद्यकीय माहिती)
                 </span>
                 <span className={leader.medical_conditions !== 'None' ? 'font-bold text-semantic-critical' : 'text-ink font-medium'}>
                   {leader.medical_conditions || 'None'}
@@ -327,7 +401,7 @@ export const DindiLeaderModal: React.FC<DindiLeaderModalProps> = ({
 
               <div>
                 <span className="text-muted block text-[10px] uppercase font-bold tracking-wider mb-0.5">
-                  Allergies
+                  Allergies (ॲलर्जी)
                 </span>
                 <span className={leader.allergies !== 'None' ? 'font-bold text-semantic-critical' : 'text-ink font-medium'}>
                   {leader.allergies || 'None'}
@@ -373,44 +447,99 @@ export const DindiLeaderModal: React.FC<DindiLeaderModalProps> = ({
           <form onSubmit={handleSave} className="space-y-4">
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-muted mb-1">
-                Full Name *
+                Full Name (पूर्ण नाव) *
               </label>
               <input
                 type="text"
                 required
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
-                className="w-full bg-parchment-light/60 border border-surface-border focus:border-saffron rounded-xl px-3.5 py-2.5 text-sm font-semibold text-ink focus:outline-none"
+                className="w-full bg-parchment-light/60 border border-surface-border focus:border-saffron rounded-xl px-3.5 py-2 text-xs font-bold text-ink focus:outline-none"
               />
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-muted mb-1">
-                  Mobile Number *
+                  Mobile Number (मोबाईल) *
                 </label>
                 <input
                   type="tel"
                   required
                   value={mobileNumber}
                   onChange={(e) => setMobileNumber(e.target.value)}
-                  maxLength={14}
-                  className="w-full bg-parchment-light/60 border border-surface-border focus:border-saffron rounded-xl px-3.5 py-2.5 text-sm font-semibold text-ink focus:outline-none"
+                  className="w-full bg-parchment-light/60 border border-surface-border focus:border-saffron rounded-xl px-3.5 py-2 text-xs font-bold text-ink focus:outline-none"
                 />
               </div>
 
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-muted mb-1">
-                  Home Village / Town (गाव / शहर) *
+                  Village / Place (गाव) *
                 </label>
                 <input
                   type="text"
                   required
                   value={village}
                   onChange={(e) => setVillage(e.target.value)}
-                  placeholder="e.g. Baramati, Satara, Sangli"
-                  className="w-full bg-parchment-light/60 border border-surface-border focus:border-saffron rounded-xl px-3.5 py-2.5 text-sm font-semibold text-ink focus:outline-none"
+                  className="w-full bg-parchment-light/60 border border-surface-border focus:border-saffron rounded-xl px-3.5 py-2 text-xs font-bold text-ink focus:outline-none"
                 />
+              </div>
+            </div>
+
+            {/* Age, Gender, Blood Group Inputs */}
+            <div className="p-3.5 rounded-2xl bg-parchment-light/50 border border-surface-border">
+              <span className="block text-[11px] font-bold uppercase tracking-wider text-saffron-dark mb-2.5">
+                Personal Information (वैयक्तिक माहिती)
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1">
+                    Age (वय)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="120"
+                    value={age}
+                    onChange={(e) => setAge(e.target.value)}
+                    placeholder="58"
+                    className="w-full bg-surface-white border border-surface-border focus:border-saffron rounded-xl px-3 py-1.5 text-xs font-semibold text-ink focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1">
+                    Gender (लिंग)
+                  </label>
+                  <select
+                    value={gender}
+                    onChange={(e) => setGender(e.target.value as Gender)}
+                    className="w-full bg-surface-white border border-surface-border focus:border-saffron rounded-xl px-3 py-1.5 text-xs font-semibold text-ink focus:outline-none cursor-pointer"
+                  >
+                    {GENDERS.map((g) => (
+                      <option key={g} value={g}>
+                        {g}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1">
+                    Blood Group (रक्तगट)
+                  </label>
+                  <select
+                    value={bloodGroup}
+                    onChange={(e) => setBloodGroup(e.target.value as BloodGroup)}
+                    className="w-full bg-surface-white border border-surface-border focus:border-saffron rounded-xl px-3 py-1.5 text-xs font-bold text-semantic-critical focus:outline-none cursor-pointer"
+                  >
+                    {BLOOD_GROUPS.map((bg) => (
+                      <option key={bg} value={bg}>
+                        {bg}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
             </div>
 
@@ -423,7 +552,8 @@ export const DindiLeaderModal: React.FC<DindiLeaderModalProps> = ({
                   type="text"
                   value={medicalConditions}
                   onChange={(e) => setMedicalConditions(e.target.value)}
-                  className="w-full bg-parchment-light/60 border border-surface-border rounded-xl px-3 py-2 text-xs font-medium text-ink focus:outline-none"
+                  placeholder="None or conditions"
+                  className="w-full bg-parchment-light/60 border border-surface-border focus:border-saffron rounded-xl px-3 py-1.5 text-xs text-ink focus:outline-none"
                 />
               </div>
 
@@ -435,54 +565,53 @@ export const DindiLeaderModal: React.FC<DindiLeaderModalProps> = ({
                   type="text"
                   value={allergies}
                   onChange={(e) => setAllergies(e.target.value)}
-                  className="w-full bg-parchment-light/60 border border-surface-border rounded-xl px-3 py-2 text-xs font-medium text-ink focus:outline-none"
+                  placeholder="None or allergies"
+                  className="w-full bg-parchment-light/60 border border-surface-border focus:border-saffron rounded-xl px-3 py-1.5 text-xs text-ink focus:outline-none"
                 />
               </div>
             </div>
 
             {/* Emergency Contacts Form */}
-            <div className="pt-2 border-t border-surface-border/60">
+            <div>
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-bold uppercase tracking-wider text-ink flex items-center gap-1">
-                  <PhoneCall className="w-3.5 h-3.5 text-saffron" />
-                  <span>Emergency Contacts</span>
-                </span>
+                <label className="block text-xs font-bold uppercase tracking-wider text-muted">
+                  Emergency Contacts
+                </label>
                 <button
                   type="button"
                   onClick={addContactRow}
-                  className="inline-flex items-center gap-1 text-[11px] font-bold text-saffron hover:text-saffron-dark px-2 py-0.5 rounded-lg hover:bg-parchment transition-colors"
+                  className="inline-flex items-center gap-1 text-xs font-bold text-saffron hover:text-saffron-dark"
                 >
-                  <Plus className="w-3 h-3" />
-                  <span>Add Another</span>
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add Contact</span>
                 </button>
               </div>
 
               <div className="space-y-2">
-                {emergencyContacts.map((contact, idx) => (
+                {emergencyContacts.map((c, idx) => (
                   <div
                     key={idx}
-                    className="p-2.5 rounded-xl bg-parchment-light/60 border border-surface-border flex items-center gap-2"
+                    className="flex items-center gap-2 p-2 rounded-xl bg-parchment-light/40 border border-surface-border"
                   >
                     <input
                       type="text"
-                      value={contact.name}
+                      value={c.name}
                       onChange={(e) => updateContactRow(idx, 'name', e.target.value)}
-                      placeholder={`Contact #${idx + 1} Name`}
-                      className="flex-1 bg-surface-white border border-surface-border rounded-lg px-2.5 py-1.5 text-xs font-medium text-ink focus:outline-none"
+                      placeholder="Contact Name"
+                      className="flex-1 bg-surface-white border border-surface-border rounded-lg px-2.5 py-1 text-xs text-ink"
                     />
                     <input
                       type="tel"
-                      value={contact.phone_number}
+                      value={c.phone_number}
                       onChange={(e) => updateContactRow(idx, 'phone_number', e.target.value)}
-                      placeholder="Mobile: 98765 00000"
-                      maxLength={14}
-                      className="flex-1 bg-surface-white border border-surface-border rounded-lg px-2.5 py-1.5 text-xs font-medium text-ink focus:outline-none"
+                      placeholder="Phone Number"
+                      className="flex-1 bg-surface-white border border-surface-border rounded-lg px-2.5 py-1 text-xs text-ink font-mono"
                     />
                     {emergencyContacts.length > 1 && (
                       <button
                         type="button"
                         onClick={() => removeContactRow(idx)}
-                        className="p-1.5 rounded-lg text-muted hover:text-semantic-critical hover:bg-semantic-critical/10"
+                        className="p-1 text-muted hover:text-semantic-critical"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -492,28 +621,22 @@ export const DindiLeaderModal: React.FC<DindiLeaderModalProps> = ({
               </div>
             </div>
 
-            <div className="pt-4 border-t border-surface-border flex items-center justify-end gap-3">
+            <div className="flex items-center justify-end gap-2.5 pt-4 border-t border-surface-border">
               <button
                 type="button"
                 onClick={() => setIsEditing(false)}
-                className="px-4 py-2 rounded-xl border border-surface-border hover:bg-parchment text-xs font-bold text-ink"
+                disabled={loading}
+                className="px-4 py-2 rounded-xl border border-surface-border text-muted font-bold text-xs hover:bg-parchment"
               >
                 Cancel
               </button>
-
               <button
                 type="submit"
                 disabled={loading}
-                className="inline-flex items-center gap-2 bg-saffron hover:bg-saffron-dark disabled:opacity-50 text-surface-white font-semibold text-xs px-6 py-2.5 rounded-xl shadow-saffron"
+                className="inline-flex items-center gap-1.5 bg-saffron hover:bg-saffron-dark text-surface-white font-bold text-xs px-5 py-2 rounded-xl shadow-saffron"
               >
-                {loading ? (
-                  <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    <span>Saving...</span>
-                  </>
-                ) : (
-                  <span>Save Leader Profile</span>
-                )}
+                {loading && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                <span>Save Changes</span>
               </button>
             </div>
           </form>

@@ -16,13 +16,16 @@ import { OnboardingScreenProps } from '../../navigation/types';
 import { colors, spacing, typography } from '../../constants';
 import { useUserProfile, setUserProfile, UserProfile, getUserRole } from '../../lib/userStore';
 import { fetchRegisteredActorByPhone } from '../../services/authService';
+import { translateUserProfile } from '../../utils/translator';
 
 export const ProfileConfirmScreen: React.FC<OnboardingScreenProps<'ProfileConfirm'>> = ({
   route,
   navigation,
 }) => {
   const { t, i18n } = useTranslation();
-  const isMarathi = i18n.language === 'mr';
+  const lang = (i18n.language || 'mr') as 'mr' | 'hi' | 'en';
+  const isMarathi = lang === 'mr';
+  const isHindi = lang === 'hi';
 
   const storeProfile = useUserProfile();
   const initialProfile: UserProfile | null = route.params?.profile || storeProfile;
@@ -95,12 +98,18 @@ export const ProfileConfirmScreen: React.FC<OnboardingScreenProps<'ProfileConfir
     );
   }
 
+  const displayProfile: UserProfile = translateUserProfile(profile, lang);
+
   const genderText =
-    profile.gender === 'Female'
+    displayProfile.gender === 'Female'
       ? isMarathi
         ? 'स्त्री'
+        : isHindi
+        ? 'महिला'
         : 'Female'
       : isMarathi
+      ? 'पुरुष'
+      : isHindi
       ? 'पुरुष'
       : 'Male';
 
@@ -130,11 +139,17 @@ export const ProfileConfirmScreen: React.FC<OnboardingScreenProps<'ProfileConfir
           {/* Header Section */}
           <View style={styles.headerSection}>
             <Text style={styles.title}>
-              {isMarathi ? 'ही तुमचीच माहिती आहे का?' : 'Is this your profile?'}
+              {isMarathi
+                ? 'ही तुमचीच माहिती आहे का?'
+                : isHindi
+                ? 'क्या यह आपकी ही जानकारी है?'
+                : 'Is this your profile?'}
             </Text>
             <Text style={styles.subtext}>
               {isMarathi
                 ? 'वारी डेटाबेसमधील अधिकृत माहिती तपासा व पुष्टी करा'
+                : isHindi
+                ? 'वारी डेटाबेस से प्राप्त विवरण की पुष्टि करें'
                 : 'Please confirm your official registration record from database'}
             </Text>
           </View>
@@ -145,11 +160,11 @@ export const ProfileConfirmScreen: React.FC<OnboardingScreenProps<'ProfileConfir
             <View style={styles.avatarContainer}>
               <Image
                 source={
-                  profile.role === 'dindiLeader'
+                  displayProfile.role === 'dindiLeader'
                     ? require('../../../assets/images/dindi_leader.png')
-                    : profile.role === 'volunteer'
+                    : displayProfile.role === 'volunteer'
                     ? require('../../../assets/images/volunteer.png')
-                    : profile.role === 'medicalStaff'
+                    : displayProfile.role === 'medicalStaff'
                     ? require('../../../assets/images/medical_staff.png')
                     : require('../../../assets/images/varkari.png')
                 }
@@ -158,19 +173,19 @@ export const ProfileConfirmScreen: React.FC<OnboardingScreenProps<'ProfileConfir
               />
             </View>
 
-            {/* Live Name from vari_varkaris */}
-            <Text style={styles.profileName}>{profile.fullName}</Text>
+            {/* Live Dynamically Translated Name from vari_varkaris */}
+            <Text style={styles.profileName}>{displayProfile.fullName}</Text>
 
-            {/* Live Village & Age from vari_varkaris */}
+            {/* Live Dynamically Translated Village from vari_varkaris */}
             <Text style={styles.profileSubtext}>
-              📍 {profile.village || 'महाराष्ट्र'} · {genderText} · {isMarathi ? `वय ${profile.age || 60}` : `Age ${profile.age || 60}`}
+              📍 {displayProfile.village || (isMarathi ? 'महाराष्ट्र' : 'Maharashtra')} · {genderText} · {isMarathi ? `वय ${displayProfile.age || 60}` : isHindi ? `उम्र ${displayProfile.age || 60}` : `Age ${displayProfile.age || 60}`}
             </Text>
 
             {/* Emergency Card Badge from vari_varkaris */}
             <View style={styles.cardIdBadge}>
               <Ionicons name="id-card" size={14} color={colors.saffronDark} />
               <Text style={styles.cardIdText}>
-                {isMarathi ? 'कार्ड आयडी:' : 'Emergency ID:'} {profile.emergencyCardId || 'VK-WARI01'}
+                {isMarathi ? 'कार्ड आयडी:' : isHindi ? 'कार्ड आईडी:' : 'Emergency ID:'} {displayProfile.emergencyCardId || 'VK-WARI01'}
               </Text>
             </View>
 
@@ -178,7 +193,11 @@ export const ProfileConfirmScreen: React.FC<OnboardingScreenProps<'ProfileConfir
 
             {/* Dindi & Medical Summary Section */}
             <Text style={styles.sectionHeader}>
-              {isMarathi ? 'दिंडी व वैद्यकीय माहिती (Database Record)' : 'Dindi & Medical Summary'}
+              {isMarathi
+                ? 'दिंडी व वैद्यकीय माहिती'
+                : isHindi
+                ? 'दिंडी व चिकित्सा विवरण'
+                : 'Dindi & Medical Summary'}
             </Text>
 
             {/* Chips Row */}
@@ -186,36 +205,38 @@ export const ProfileConfirmScreen: React.FC<OnboardingScreenProps<'ProfileConfir
               {/* Dindi Tag */}
               <View style={[styles.chip, styles.dindiChip]}>
                 <Text style={styles.chipText}>
-                  🚩 {profile.dindiName || `दिंडी क्र. ${profile.dindiNumber || '१२'}`}
+                  🚩 {displayProfile.dindiName || (isMarathi ? `दिंडी क्र. ${displayProfile.dindiNumber || '१२'}` : `Dindi #${displayProfile.dindiNumber || '12'}`)}
                 </Text>
               </View>
 
               {/* Blood Group */}
               <View style={[styles.chip, styles.bloodChip]}>
-                <Text style={styles.chipText}>🩸 {profile.bloodGroup || 'B+'}</Text>
+                <Text style={styles.chipText}>🩸 {displayProfile.bloodGroup || 'B+'}</Text>
               </View>
 
               {/* Phone Tag */}
               <View style={[styles.chip, styles.infoChip]}>
-                <Text style={styles.chipText}>📱 {profile.mobileNumber}</Text>
+                <Text style={styles.chipText}>📱 {displayProfile.mobileNumber}</Text>
               </View>
 
               {/* Medical Conditions */}
-              {profile.medicalConditions && profile.medicalConditions.length > 0
-                ? profile.medicalConditions.map((cond, index) => (
+              {displayProfile.medicalConditions && displayProfile.medicalConditions.length > 0
+                ? displayProfile.medicalConditions.map((cond, index) => (
                     <View key={`cond-${index}`} style={[styles.chip, styles.conditionChip]}>
                       <Text style={styles.chipText}>💊 {cond}</Text>
                     </View>
                   ))
                 : (
                   <View style={[styles.chip, styles.safeChip]}>
-                    <Text style={styles.chipText}>🟢 {isMarathi ? 'कोणतीही गंभीर व्याधी नाही' : 'No Critical Conditions'}</Text>
+                    <Text style={styles.chipText}>
+                      🟢 {isMarathi ? 'कोणतीही गंभीर व्याधी नाही' : isHindi ? 'कोई गंभीर बीमारी नहीं' : 'No Critical Conditions'}
+                    </Text>
                   </View>
                 )}
 
               {/* Allergies */}
-              {profile.allergies && profile.allergies.length > 0 ? (
-                profile.allergies.map((allergy, index) => (
+              {displayProfile.allergies && displayProfile.allergies.length > 0 ? (
+                displayProfile.allergies.map((allergy, index) => (
                   <View key={`all-${index}`} style={[styles.chip, styles.allergyChip]}>
                     <Text style={styles.chipText}>⚠️ {allergy}</Text>
                   </View>
@@ -229,6 +250,8 @@ export const ProfileConfirmScreen: React.FC<OnboardingScreenProps<'ProfileConfir
               <Text style={styles.captionText}>
                 {isMarathi
                   ? 'आपत्कालीन प्रसंगी मदतनीस व डॉक्टरांना हे कार्ड थेट दिसेल'
+                  : isHindi
+                  ? 'आपात स्थिति में डॉक्टरों व स्वयंसेवकों को यह कार्ड दिखाई देगा'
                   : 'This emergency profile will be visible to doctors & leaders during SOS'}
               </Text>
             </View>
