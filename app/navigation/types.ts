@@ -5,11 +5,11 @@ export type OnboardingStackParamList = {
   Splash: undefined;
   LanguageSelect: undefined;
   RoleSelect: undefined;
-  MobileNumber: undefined;
-  OTPVerification: { mobileNumber?: string } | undefined;
-  Loading: { preloadedPlayer?: any } | undefined;
-  ProfileConfirm: undefined;
-  ProfileNotFound: undefined;
+  MobileNumber: { selectedRole?: string } | undefined;
+  OTPVerification: { mobileNumber: string; selectedRole?: string };
+  Loading: { mobileNumber: string; selectedRole?: string; preloadedPlayer?: any };
+  ProfileConfirm: { profile?: any } | undefined;
+  ProfileNotFound: { mobileNumber?: string; selectedRole?: string } | undefined;
   EmergencyID: undefined;
   HowItWorks: undefined;
   Consent: undefined;

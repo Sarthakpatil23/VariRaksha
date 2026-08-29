@@ -5,20 +5,25 @@ import { useTranslation } from 'react-i18next';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { OnboardingScreenProps } from '../../navigation/types';
 import { colors, spacing, typography } from '../../constants';
+import { fetchRegisteredActorByPhone } from '../../services/authService';
+import { getUserRole, setUserProfile } from '../../lib/userStore';
 
-// Require background video asset
 const VIDEO_SOURCE = require('../../../assets/videos/loading_video.webm');
-const LOADING_DURATION_MS = 4000;
+const MIN_LOADING_TIME_MS = 2500;
 const START_TIME_SECONDS = 1.0;
 
 export const LoadingScreen: React.FC<OnboardingScreenProps<'Loading'>> = ({
   route,
   navigation,
 }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isMarathi = i18n.language === 'mr';
+
+  const rawMobile = route.params?.mobileNumber || '9423010001';
+  const role = (route.params?.selectedRole as any) || getUserRole();
   const preloadedPlayer = route.params?.preloadedPlayer;
 
-  // Fallback player if navigated to without a pre-buffered instance
+  // Fallback player if navigated without pre-buffered player
   const fallbackPlayer = useVideoPlayer(VIDEO_SOURCE, (p) => {
     p.loop = true;
     p.muted = true;
@@ -37,16 +42,55 @@ export const LoadingScreen: React.FC<OnboardingScreenProps<'Loading'>> = ({
       } catch (e) {}
     }
 
-    const timer = setTimeout(() => {
-      navigation.replace('ProfileConfirm');
-    }, LOADING_DURATION_MS);
+    let isMounted = true;
+    const startTime = Date.now();
 
-    return () => clearTimeout(timer);
-  }, [activePlayer, navigation]);
+    const doLookup = async () => {
+      try {
+        console.log('[LoadingScreen] Fetching profile from database for:', rawMobile, role);
+        const profile = await fetchRegisteredActorByPhone(rawMobile, role);
+
+        const elapsedTime = Date.now() - startTime;
+        const remainingTime = Math.max(0, MIN_LOADING_TIME_MS - elapsedTime);
+
+        setTimeout(() => {
+          if (!isMounted) return;
+
+          if (profile) {
+            console.log('[LoadingScreen] Found registered profile:', profile.fullName);
+            setUserProfile(profile);
+            navigation.replace('ProfileConfirm', { profile });
+          } else {
+            console.log('[LoadingScreen] No matching profile found in database.');
+            navigation.replace('ProfileNotFound', {
+              mobileNumber: rawMobile,
+              selectedRole: role,
+            });
+          }
+        }, remainingTime);
+      } catch (err) {
+        console.error('[LoadingScreen] Error during profile lookup:', err);
+        setTimeout(() => {
+          if (isMounted) {
+            navigation.replace('ProfileNotFound', {
+              mobileNumber: rawMobile,
+              selectedRole: role,
+            });
+          }
+        }, MIN_LOADING_TIME_MS);
+      }
+    };
+
+    doLookup();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [activePlayer, navigation, rawMobile, role]);
 
   return (
     <View style={styles.container}>
-      {/* Full-screen background video playing instantly with 0ms gap */}
+      {/* Full-screen background video playing with 0ms gap */}
       <VideoView
         style={styles.videoView}
         player={activePlayer}
@@ -59,7 +103,9 @@ export const LoadingScreen: React.FC<OnboardingScreenProps<'Loading'>> = ({
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.centerContainer}>
           <Text style={styles.loadingTitle}>
-            {t('loadingTitle', 'Verifying your registration details...')}
+            {isMarathi
+              ? 'तुमची नोंदणी व दिंडी माहिती शोधत आहोत...'
+              : 'Verifying your registration details with database...'}
           </Text>
         </View>
       </SafeAreaView>
@@ -92,6 +138,7 @@ const styles = StyleSheet.create({
     textShadowColor: 'rgba(0, 0, 0, 0.85)',
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 8,
+    lineHeight: 30,
   },
 });
 

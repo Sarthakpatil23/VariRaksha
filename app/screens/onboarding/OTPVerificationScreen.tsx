@@ -9,10 +9,10 @@ import {
   Platform,
   TouchableWithoutFeedback,
   Keyboard,
-  Alert,
   ActivityIndicator,
   NativeSyntheticEvent,
   TextInputKeyPressEventData,
+  Vibration,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
@@ -20,6 +20,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { createVideoPlayer } from 'expo-video';
 import { OnboardingScreenProps } from '../../navigation/types';
 import { colors, spacing, typography } from '../../constants';
+import { sendPhoneOTP, verifyPhoneOTP } from '../../services/authService';
+import { getUserRole } from '../../lib/userStore';
 
 const OTP_LENGTH = 6;
 const RESEND_TIMER_SECONDS = 30;
@@ -27,21 +29,25 @@ const START_TIME_SECONDS = 1.0;
 const VIDEO_SOURCE = require('../../../assets/videos/loading_video.webm');
 
 /**
- * Utility to mask mobile number (e.g., 9876543210 -> +91 98XXX XX210)
+ * Mask mobile number (e.g. 9423010001 -> +91 94XXX XX001)
  */
 const formatMaskedMobile = (mobile?: string): string => {
-  if (!mobile || mobile.length !== 10) {
+  if (!mobile || mobile.length < 10) {
     return '+91 98XXX XX000';
   }
-  return `+91 ${mobile.slice(0, 2)}XXX XX${mobile.slice(7)}`;
+  const clean = mobile.replace(/[^0-9]/g, '').slice(-10);
+  return `+91 ${clean.slice(0, 2)}XXX XX${clean.slice(7)}`;
 };
 
 export const OTPVerificationScreen: React.FC<OnboardingScreenProps<'OTPVerification'>> = ({
   route,
   navigation,
 }) => {
-  const { t } = useTranslation();
-  const rawMobileNumber = route.params?.mobileNumber;
+  const { t, i18n } = useTranslation();
+  const isMarathi = i18n.language === 'mr';
+
+  const rawMobileNumber = route.params?.mobileNumber || '9423010001';
+  const role = route.params?.selectedRole || getUserRole();
   const maskedMobile = formatMaskedMobile(rawMobileNumber);
 
   // State for 6 OTP digit inputs
@@ -50,15 +56,18 @@ export const OTPVerificationScreen: React.FC<OnboardingScreenProps<'OTPVerificat
   // Resend countdown timer state
   const [countdown, setCountdown] = useState<number>(RESEND_TIMER_SECONDS);
   const [canResend, setCanResend] = useState<boolean>(false);
+  const [isResending, setIsResending] = useState<boolean>(false);
+  const [isVerifying, setIsVerifying] = useState<boolean>(false);
+  const [errorMessage, setErrorMessage] = useState<string>('');
 
   // Array of refs for each of the 6 OTP input boxes
   const inputRefs = useRef<Array<TextInput | null>>([]);
 
-  // Auto-focus the 1st OTP box the moment the screen mounts to minimize friction
+  // Auto-focus the 1st OTP box on mount
   useEffect(() => {
     const timer = setTimeout(() => {
       inputRefs.current[0]?.focus();
-    }, 100);
+    }, 120);
     return () => clearTimeout(timer);
   }, []);
 
@@ -76,7 +85,7 @@ export const OTPVerificationScreen: React.FC<OnboardingScreenProps<'OTPVerificat
     return () => clearInterval(interval);
   }, [countdown]);
 
-  // Format seconds into MM:SS format
+  // Format seconds into MM:SS
   const formatTimer = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -86,8 +95,9 @@ export const OTPVerificationScreen: React.FC<OnboardingScreenProps<'OTPVerificat
   // Handle single digit input and auto-advancing focus
   const handleChangeText = (text: string, index: number) => {
     const sanitizedText = text.replace(/[^0-9]/g, '');
+    if (errorMessage) setErrorMessage('');
 
-    // Support multi-character paste (e.g. user pastes full 6-digit code)
+    // Support multi-character paste / SMS autofill
     if (sanitizedText.length > 1) {
       const pastedDigits = sanitizedText.slice(0, OTP_LENGTH).split('');
       const newValues = [...otpValues];
@@ -100,6 +110,11 @@ export const OTPVerificationScreen: React.FC<OnboardingScreenProps<'OTPVerificat
       
       const lastFilledIndex = Math.min(pastedDigits.length - 1, OTP_LENGTH - 1);
       inputRefs.current[lastFilledIndex]?.focus();
+
+      // If full 6 digits filled by SMS auto-fill, trigger auto verify
+      if (pastedDigits.length >= OTP_LENGTH) {
+        triggerVerification(pastedDigits.join(''));
+      }
       return;
     }
 
@@ -107,13 +122,13 @@ export const OTPVerificationScreen: React.FC<OnboardingScreenProps<'OTPVerificat
     newValues[index] = sanitizedText;
     setOtpValues(newValues);
 
-    // Auto-advance focus to the next box if a digit was entered
+    // Auto-advance focus to the next box
     if (sanitizedText && index < OTP_LENGTH - 1) {
       inputRefs.current[index + 1]?.focus();
     }
   };
 
-  // Handle Backspace navigation back to previous input box
+  // Handle Backspace navigation
   const handleKeyPress = (
     e: NativeSyntheticEvent<TextInputKeyPressEventData>,
     index: number,
@@ -129,77 +144,73 @@ export const OTPVerificationScreen: React.FC<OnboardingScreenProps<'OTPVerificat
   };
 
   const isComplete = otpValues.every((digit) => digit.length === 1);
-  const [isVerifying, setIsVerifying] = useState<boolean>(false);
 
-  const handleVerify = () => {
-    if (!isComplete || isVerifying) return;
+  const triggerVerification = async (otpString: string) => {
+    if (isVerifying) return;
+    Keyboard.dismiss();
     setIsVerifying(true);
+    setErrorMessage('');
+    Vibration.vibrate(30);
 
-    const fullOtp = otpValues.join('');
-    console.log('Verifying OTP:', fullOtp);
-
-    // TODO: replace with real OTP verification via Supabase Auth:
-    // const { session, error } = await supabase.auth.verifyOtp({
-    //   phone: `+91${rawMobileNumber}`,
-    //   token: fullOtp,
-    //   type: 'sms',
-    // });
-
-    // Preload video player while user is still on the Verify screen
     try {
-      const player = createVideoPlayer(VIDEO_SOURCE);
-      player.loop = true;
-      player.muted = true;
-      player.currentTime = START_TIME_SECONDS;
-      player.play();
+      const res = await verifyPhoneOTP(rawMobileNumber, otpString);
+      if (res.success) {
+        // Preload video player while user is transitioning
+        let player: any = null;
+        try {
+          player = createVideoPlayer(VIDEO_SOURCE);
+          player.loop = true;
+          player.muted = true;
+          player.currentTime = START_TIME_SECONDS;
+          player.play();
+        } catch (e) {
+          console.log('[OTPVerification] Video preload notice:', e);
+        }
 
-      let navigated = false;
-      const navigateToLoading = () => {
-        if (navigated) return;
-        navigated = true;
-        setIsVerifying(false);
-        navigation.navigate('Loading', { preloadedPlayer: player });
-      };
-
-      if (player.status === 'readyToPlay') {
-        navigateToLoading();
-      } else {
-        const sub = player.addListener('statusChange', ({ status }) => {
-          if (status === 'readyToPlay') {
-            sub.remove();
-            navigateToLoading();
-          }
+        navigation.replace('Loading', {
+          mobileNumber: rawMobileNumber,
+          selectedRole: role,
+          preloadedPlayer: player,
         });
-        // Safety timeout so user is never stuck
-        setTimeout(() => {
-          navigateToLoading();
-        }, 500);
+      } else {
+        setErrorMessage(
+          res.error ||
+            (isMarathi ? 'अवैध ओटीपी. कृपया पुन्हा तपासा.' : 'Invalid OTP. Please check and try again.'),
+        );
       }
-    } catch (err) {
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Verification error');
+    } finally {
       setIsVerifying(false);
-      navigation.navigate('Loading');
     }
   };
 
-  const handleResend = () => {
-    if (!canResend) return;
+  const handleVerify = () => {
+    if (!isComplete || isVerifying) return;
+    triggerVerification(otpValues.join(''));
+  };
 
-    // Reset state & timer
-    setCanResend(false);
-    setCountdown(RESEND_TIMER_SECONDS);
-    setOtpValues(Array(OTP_LENGTH).fill(''));
-    inputRefs.current[0]?.focus();
+  const handleResend = async () => {
+    if (!canResend || isResending) return;
+    setIsResending(true);
+    setErrorMessage('');
+    Vibration.vibrate(20);
 
-    // TODO: Replace with real Supabase resend OTP API call:
-    // await supabase.auth.signInWithOtp({ phone: `+91${rawMobileNumber}` });
-
-    Alert.alert(
-      t('otpResentToastTitle', 'OTP Resent'),
-      t(
-        'otpResentToastMessage',
-        'A new 6-digit OTP has been sent to your mobile number.',
-      ),
-    );
+    try {
+      const res = await sendPhoneOTP(rawMobileNumber);
+      if (res.success) {
+        setCountdown(RESEND_TIMER_SECONDS);
+        setCanResend(false);
+        setOtpValues(Array(OTP_LENGTH).fill(''));
+        inputRefs.current[0]?.focus();
+      } else {
+        setErrorMessage(res.message || 'Failed to resend OTP');
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Resend error');
+    } finally {
+      setIsResending(false);
+    }
   };
 
   return (
@@ -230,50 +241,86 @@ export const OTPVerificationScreen: React.FC<OnboardingScreenProps<'OTPVerificat
             {/* Header Section */}
             <View style={styles.headerSection}>
               <Text style={styles.title}>
-                {t('enterOtpTitle', 'Enter OTP')}
+                {isMarathi ? 'ओटीपी प्रविष्ट करा' : 'Enter OTP Verification Code'}
               </Text>
               <Text style={styles.subtext}>
-                {t('otpSentTo', 'Sent to {{number}}', { number: maskedMobile })}
+                {isMarathi
+                  ? `${maskedMobile} वर पाठवलेला ६ अंकी कोड प्रविष्ट करा`
+                  : `Enter the 6-digit code sent to ${maskedMobile}`}
               </Text>
             </View>
 
-            {/* 6-Digit OTP Boxes Row */}
+            {/* 6-Digit OTP Boxes Row with SMS AutoFill */}
             <View style={styles.otpRow}>
-              {otpValues.map((digit, index) => (
-                <TextInput
-                  key={index}
-                  ref={(el) => {
-                    inputRefs.current[index] = el;
-                  }}
-                  style={[
-                    styles.otpBox,
-                    digit ? styles.filledOtpBox : null,
-                  ]}
-                  value={digit}
-                  onChangeText={(text) => handleChangeText(text, index)}
-                  onKeyPress={(e) => handleKeyPress(e, index)}
-                  keyboardType="number-pad"
-                  maxLength={1}
-                  selectTextOnFocus={true}
-                  accessibilityLabel={`OTP Digit ${index + 1}`}
-                />
-              ))}
+              {otpValues.map((value, index) => {
+                const isFocused =
+                  (!value && otpValues.slice(0, index).every((d) => d.length === 1)) ||
+                  (index === 0 && !otpValues[0]);
+
+                return (
+                  <View
+                    key={index}
+                    style={[
+                      styles.otpBoxWrapper,
+                      isFocused && styles.otpBoxWrapperFocused,
+                      value ? styles.otpBoxWrapperFilled : null,
+                    ]}
+                  >
+                    <TextInput
+                      ref={(el) => {
+                        inputRefs.current[index] = el;
+                      }}
+                      style={styles.otpInput}
+                      value={value}
+                      onChangeText={(text) => handleChangeText(text, index)}
+                      onKeyPress={(e) => handleKeyPress(e, index)}
+                      keyboardType="number-pad"
+                      maxLength={index === 0 ? OTP_LENGTH : 1}
+                      selectTextOnFocus
+                      textContentType="oneTimeCode"
+                      autoComplete="sms-otp"
+                      importantForAutofill="yes"
+                      accessibilityLabel={`OTP digit ${index + 1}`}
+                    />
+                  </View>
+                );
+              })}
             </View>
 
-            {/* Resend Link & Countdown Section */}
+            {/* Error Feedback */}
+            {errorMessage ? (
+              <View style={styles.errorContainer}>
+                <Ionicons name="alert-circle" size={16} color={colors.error} />
+                <Text style={styles.errorText}>{errorMessage}</Text>
+              </View>
+            ) : null}
+
+            {/* Resend OTP Section */}
             <View style={styles.resendSection}>
               {canResend ? (
-                <TouchableOpacity activeOpacity={0.7} onPress={handleResend}>
-                  <Text style={styles.resendActiveText}>
-                    {t('resendOtp', 'Resend OTP')}
-                  </Text>
+                <TouchableOpacity
+                  activeOpacity={0.7}
+                  onPress={handleResend}
+                  disabled={isResending}
+                  style={styles.resendButton}
+                >
+                  {isResending ? (
+                    <ActivityIndicator size="small" color={colors.saffronDark} />
+                  ) : (
+                    <Text style={styles.resendTextActive}>
+                      {isMarathi ? 'ओटीपी पुन्हा पाठवा (Resend OTP)' : 'Resend OTP'}
+                    </Text>
+                  )}
                 </TouchableOpacity>
               ) : (
-                <Text style={styles.resendDisabledText}>
-                  {t('resendIn', 'Resend in {{time}}', {
-                    time: formatTimer(countdown),
-                  })}
-                </Text>
+                <View style={styles.timerRow}>
+                  <Ionicons name="time-outline" size={14} color={colors.textSecondary} />
+                  <Text style={styles.resendTextDisabled}>
+                    {isMarathi
+                      ? `पुन्हा पाठवण्यासाठी प्रतीक्षा करा: ${formatTimer(countdown)}`
+                      : `Resend code in ${formatTimer(countdown)}`}
+                  </Text>
+                </View>
               )}
             </View>
           </View>
@@ -295,7 +342,7 @@ export const OTPVerificationScreen: React.FC<OnboardingScreenProps<'OTPVerificat
                 <ActivityIndicator size="small" color={colors.surface} />
               ) : (
                 <Text style={styles.verifyButtonText}>
-                  {t('verifyButton', 'Verify')}
+                  {isMarathi ? 'पडताळणी करा (Verify & Continue)' : 'Verify & Continue'}
                 </Text>
               )}
             </TouchableOpacity>
@@ -332,15 +379,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  backArrow: {
-    fontSize: 20,
-    lineHeight: 20,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.maroon,
-    textAlign: 'center',
-    textAlignVertical: 'center',
-    includeFontPadding: false,
-  },
   brandBadge: {
     backgroundColor: 'rgba(93, 0, 30, 0.1)',
     paddingHorizontal: spacing.md,
@@ -364,14 +402,14 @@ const styles = StyleSheet.create({
     marginBottom: spacing.xl,
   },
   title: {
-    fontSize: 26,
-    fontWeight: typography.fontWeight.bold,
+    fontSize: 24,
+    fontWeight: '900',
     color: colors.maroon,
     marginBottom: spacing.xs,
-    lineHeight: typography.lineHeight.xl,
+    lineHeight: 30,
   },
   subtext: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: typography.fontWeight.medium,
     color: colors.textSecondary,
     lineHeight: typography.lineHeight.md,
@@ -380,41 +418,71 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginVertical: spacing.md,
+    marginBottom: spacing.lg,
   },
-  otpBox: {
+  otpBoxWrapper: {
     width: 48,
-    height: 58,
-    backgroundColor: colors.surface,
+    height: 56,
     borderRadius: 14,
-    borderWidth: 2,
+    backgroundColor: colors.surface,
+    borderWidth: 1.5,
     borderColor: colors.border,
-    fontSize: 24,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.text,
-    textAlign: 'center',
-    shadowColor: '#000000',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
     shadowRadius: 4,
     elevation: 2,
   },
-  filledOtpBox: {
+  otpBoxWrapperFocused: {
     borderColor: colors.saffronDark,
-    backgroundColor: colors.surface,
+    borderWidth: 2,
+  },
+  otpBoxWrapperFilled: {
+    borderColor: colors.maroon,
+    backgroundColor: '#FFF8F0',
+  },
+  otpInput: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: colors.maroon,
+    textAlign: 'center',
+    width: '100%',
+    height: '100%',
+  },
+  errorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: spacing.md,
+  },
+  errorText: {
+    color: colors.error,
+    fontSize: 13,
+    fontWeight: typography.fontWeight.medium,
   },
   resendSection: {
     alignItems: 'center',
-    marginTop: spacing.lg,
+    marginTop: spacing.sm,
   },
-  resendActiveText: {
-    fontSize: 15,
-    fontWeight: typography.fontWeight.bold,
+  resendButton: {
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+  },
+  resendTextActive: {
+    fontSize: 14,
+    fontWeight: '800',
     color: colors.saffronDark,
     textDecorationLine: 'underline',
   },
-  resendDisabledText: {
-    fontSize: 14,
+  timerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  resendTextDisabled: {
+    fontSize: 13,
     fontWeight: typography.fontWeight.medium,
     color: colors.textSecondary,
   },

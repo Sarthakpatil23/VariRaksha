@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,47 +6,103 @@ import {
   Image,
   TouchableOpacity,
   ScrollView,
+  ActivityIndicator,
+  Vibration,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { Ionicons } from '@expo/vector-icons';
 import { OnboardingScreenProps } from '../../navigation/types';
 import { colors, spacing, typography } from '../../constants';
-
-/**
- * Mock Pilgrim Profile data
- * // TODO: replace with real profile lookup via Supabase using the verified mobile number
- */
-const MOCK_PROFILE = {
-  name: 'Ramesh Kulkarni',
-  gender: 'male',
-  age: 68,
-  dindiNumber: '12',
-  dindiName: 'Dindi #12',
-  bloodGroup: 'B+',
-  allergies: ['Penicillin'],
-  conditions: ['Hypertension'],
-};
+import { useUserProfile, setUserProfile, UserProfile, getUserRole } from '../../lib/userStore';
+import { fetchRegisteredActorByPhone } from '../../services/authService';
 
 export const ProfileConfirmScreen: React.FC<OnboardingScreenProps<'ProfileConfirm'>> = ({
+  route,
   navigation,
 }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isMarathi = i18n.language === 'mr';
 
-  // In real flow, fetch profile using mobile number passed from route/state
-  const profile = MOCK_PROFILE;
-  const genderText = profile.gender === 'male' ? t('male', 'Male') : t('female', 'Female');
-  const dindiTagText = t('dindiNumberTag', 'Dindi #{{number}}', { number: profile.dindiNumber });
+  const storeProfile = useUserProfile();
+  const initialProfile: UserProfile | null = route.params?.profile || storeProfile;
+  const rawMobile = (route.params as any)?.mobileNumber || storeProfile?.mobileNumber || '9970832199';
+  const role = getUserRole();
+
+  const [profile, setProfile] = useState<UserProfile | null>(initialProfile);
+  const [isLoading, setIsLoading] = useState<boolean>(!initialProfile);
+
+  // Live database fetch from vari_varkaris on mount if profile not pre-provided
+  useEffect(() => {
+    if (!profile && rawMobile) {
+      let isMounted = true;
+      setIsLoading(true);
+
+      fetchRegisteredActorByPhone(rawMobile, role)
+        .then((dbProfile) => {
+          if (!isMounted) return;
+          if (dbProfile) {
+            setProfile(dbProfile);
+            setUserProfile(dbProfile);
+          } else {
+            navigation.replace('ProfileNotFound', {
+              mobileNumber: rawMobile,
+              selectedRole: role,
+            });
+          }
+        })
+        .catch((err) => {
+          console.error('[ProfileConfirmScreen] DB fetch error:', err);
+        })
+        .finally(() => {
+          if (isMounted) setIsLoading(false);
+        });
+
+      return () => {
+        isMounted = false;
+      };
+    }
+  }, [profile, rawMobile, role, navigation]);
 
   const handleConfirmCorrect = () => {
-    // Redirect directly to tutorial page (HowItWorks)
+    Vibration.vibrate(30);
+    if (profile) {
+      setUserProfile(profile);
+    }
     navigation.navigate('HowItWorks');
   };
 
   const handleNotMe = () => {
-    // Fallback path when records don't match the current user
-    navigation.navigate('ProfileNotFound');
+    Vibration.vibrate(20);
+    navigation.navigate('ProfileNotFound', {
+      mobileNumber: profile?.mobileNumber || rawMobile,
+      selectedRole: profile?.role || role,
+    });
   };
+
+  if (isLoading || !profile) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={colors.saffronDark} />
+          <Text style={styles.loadingText}>
+            {isMarathi
+              ? 'डेटाबेसमधून वारकरी माहिती लोड करत आहोत...'
+              : 'Fetching your Varkari profile from database...'}
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const genderText =
+    profile.gender === 'Female'
+      ? isMarathi
+        ? 'स्त्री'
+        : 'Female'
+      : isMarathi
+      ? 'पुरुष'
+      : 'Male';
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -74,84 +130,106 @@ export const ProfileConfirmScreen: React.FC<OnboardingScreenProps<'ProfileConfir
           {/* Header Section */}
           <View style={styles.headerSection}>
             <Text style={styles.title}>
-              {t('isThisYouTitle', 'Is this you?')}
+              {isMarathi ? 'ही तुमचीच माहिती आहे का?' : 'Is this your profile?'}
             </Text>
             <Text style={styles.subtext}>
-              {t(
-                'confirmDetailsSubtext',
-                'Please confirm your registration record to continue',
-              )}
+              {isMarathi
+                ? 'वारी डेटाबेसमधील अधिकृत माहिती तपासा व पुष्टी करा'
+                : 'Please confirm your official registration record from database'}
             </Text>
           </View>
 
-          {/* Centered Confirmation Profile Card */}
+          {/* Database-Backed Profile Card */}
           <View style={styles.profileCard}>
-            {/* Circular Avatar Placeholder */}
+            {/* Avatar */}
             <View style={styles.avatarContainer}>
               <Image
-                source={require('../../../assets/images/varkari.png')}
+                source={
+                  profile.role === 'dindiLeader'
+                    ? require('../../../assets/images/dindi_leader.png')
+                    : profile.role === 'volunteer'
+                    ? require('../../../assets/images/volunteer.png')
+                    : profile.role === 'medicalStaff'
+                    ? require('../../../assets/images/medical_staff.png')
+                    : require('../../../assets/images/varkari.png')
+                }
                 style={styles.avatarImage}
                 resizeMode="cover"
               />
             </View>
 
-            {/* Name */}
-            <Text style={styles.profileName}>{profile.name}</Text>
+            {/* Live Name from vari_varkaris */}
+            <Text style={styles.profileName}>{profile.fullName}</Text>
 
-            {/* Gender, Age & Dindi Number Subtext */}
+            {/* Live Village & Age from vari_varkaris */}
             <Text style={styles.profileSubtext}>
-              {t('genderAgeDindi', '{{gender}} · Age {{age}} · Dindi #{{dindiNumber}}', {
-                gender: genderText,
-                age: profile.age,
-                dindiNumber: profile.dindiNumber,
-              })}
+              📍 {profile.village || 'महाराष्ट्र'} · {genderText} · {isMarathi ? `वय ${profile.age || 60}` : `Age ${profile.age || 60}`}
             </Text>
+
+            {/* Emergency Card Badge from vari_varkaris */}
+            <View style={styles.cardIdBadge}>
+              <Ionicons name="id-card" size={14} color={colors.saffronDark} />
+              <Text style={styles.cardIdText}>
+                {isMarathi ? 'कार्ड आयडी:' : 'Emergency ID:'} {profile.emergencyCardId || 'VK-WARI01'}
+              </Text>
+            </View>
 
             <View style={styles.divider} />
 
-            {/* Profile & Medical Summary Section */}
-            <Text style={styles.sectionHeader}>Profile Summary</Text>
+            {/* Dindi & Medical Summary Section */}
+            <Text style={styles.sectionHeader}>
+              {isMarathi ? 'दिंडी व वैद्यकीय माहिती (Database Record)' : 'Dindi & Medical Summary'}
+            </Text>
 
-            {/* Key Info & Medical Chips Row */}
+            {/* Chips Row */}
             <View style={styles.chipsRow}>
-              {/* Gender Tag */}
-              <View style={[styles.chip, styles.infoChip]}>
-                <Text style={styles.chipText}>👤 {genderText}</Text>
-              </View>
-
-              {/* Dindi Number Tag */}
+              {/* Dindi Tag */}
               <View style={[styles.chip, styles.dindiChip]}>
-                <Text style={styles.chipText}>🚩 {dindiTagText}</Text>
+                <Text style={styles.chipText}>
+                  🚩 {profile.dindiName || `दिंडी क्र. ${profile.dindiNumber || '१२'}`}
+                </Text>
               </View>
 
-              {/* Blood Group Tag */}
+              {/* Blood Group */}
               <View style={[styles.chip, styles.bloodChip]}>
-                <Text style={styles.chipText}>🩸 {profile.bloodGroup}</Text>
+                <Text style={styles.chipText}>🩸 {profile.bloodGroup || 'B+'}</Text>
               </View>
 
-              {/* Allergies Tags */}
-              {profile.allergies.map((allergy, index) => (
-                <View key={`allergy-${index}`} style={[styles.chip, styles.allergyChip]}>
-                  <Text style={styles.chipText}>⚠️ {allergy}</Text>
-                </View>
-              ))}
+              {/* Phone Tag */}
+              <View style={[styles.chip, styles.infoChip]}>
+                <Text style={styles.chipText}>📱 {profile.mobileNumber}</Text>
+              </View>
 
-              {/* Conditions Tags */}
-              {profile.conditions.map((condition, index) => (
-                <View key={`condition-${index}`} style={[styles.chip, styles.conditionChip]}>
-                  <Text style={styles.chipText}>💊 {condition}</Text>
-                </View>
-              ))}
+              {/* Medical Conditions */}
+              {profile.medicalConditions && profile.medicalConditions.length > 0
+                ? profile.medicalConditions.map((cond, index) => (
+                    <View key={`cond-${index}`} style={[styles.chip, styles.conditionChip]}>
+                      <Text style={styles.chipText}>💊 {cond}</Text>
+                    </View>
+                  ))
+                : (
+                  <View style={[styles.chip, styles.safeChip]}>
+                    <Text style={styles.chipText}>🟢 {isMarathi ? 'कोणतीही गंभीर व्याधी नाही' : 'No Critical Conditions'}</Text>
+                  </View>
+                )}
+
+              {/* Allergies */}
+              {profile.allergies && profile.allergies.length > 0 ? (
+                profile.allergies.map((allergy, index) => (
+                  <View key={`all-${index}`} style={[styles.chip, styles.allergyChip]}>
+                    <Text style={styles.chipText}>⚠️ {allergy}</Text>
+                  </View>
+                ))
+              ) : null}
             </View>
 
             {/* Reassuring Framing Caption */}
             <View style={styles.captionRow}>
               <Text style={styles.captionIcon}>🛡️</Text>
               <Text style={styles.captionText}>
-                {t(
-                  'respondersViewCaption',
-                  'This is what responders will see if you need help',
-                )}
+                {isMarathi
+                  ? 'आपत्कालीन प्रसंगी मदतनीस व डॉक्टरांना हे कार्ड थेट दिसेल'
+                  : 'This emergency profile will be visible to doctors & leaders during SOS'}
               </Text>
             </View>
           </View>
@@ -167,7 +245,7 @@ export const ProfileConfirmScreen: React.FC<OnboardingScreenProps<'ProfileConfir
             accessibilityRole="button"
           >
             <Text style={styles.confirmButtonText}>
-              {t('confirmCorrectButton', 'Yes, this is correct')}
+              {isMarathi ? 'होय, ही माझीच माहिती आहे' : 'Yes, this is correct'}
             </Text>
           </TouchableOpacity>
 
@@ -179,7 +257,7 @@ export const ProfileConfirmScreen: React.FC<OnboardingScreenProps<'ProfileConfir
             accessibilityRole="button"
           >
             <Text style={styles.notMeText}>
-              {t('notMeLink', "This isn't me")}
+              {isMarathi ? 'ही माझी माहिती नाही / नंबर बदला' : "This isn't me / Change"}
             </Text>
           </TouchableOpacity>
         </View>
@@ -199,6 +277,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.xs,
     paddingBottom: spacing.lg,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: spacing.xl,
+    gap: 12,
+  },
+  loadingText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.maroon,
+    textAlign: 'center',
   },
   topBar: {
     flexDirection: 'row',
@@ -239,14 +330,14 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   title: {
-    fontSize: 26,
-    fontWeight: typography.fontWeight.bold,
+    fontSize: 24,
+    fontWeight: '900',
     color: colors.maroon,
     textAlign: 'center',
     marginBottom: spacing.xs,
   },
   subtext: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: typography.fontWeight.medium,
     color: colors.textSecondary,
     textAlign: 'center',
@@ -255,30 +346,30 @@ const styles = StyleSheet.create({
   profileCard: {
     backgroundColor: colors.surface,
     borderRadius: 24,
-    padding: spacing.lg,
+    padding: spacing.md,
     alignItems: 'center',
     borderWidth: 1.5,
     borderColor: colors.border,
     shadowColor: '#000000',
     shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.1,
-    shadowRadius: 14,
-    elevation: 6,
-    marginBottom: spacing.md,
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 5,
+    marginBottom: spacing.sm,
   },
   avatarContainer: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
+    width: 80,
+    height: 80,
+    borderRadius: 40,
     backgroundColor: colors.cream,
     overflow: 'hidden',
     borderWidth: 3,
     borderColor: colors.saffron,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: spacing.md,
+    marginBottom: spacing.sm,
     shadowColor: colors.saffron,
-    shadowOffset: { width: 0, height: 4 },
+    shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.25,
     shadowRadius: 6,
     elevation: 4,
@@ -288,45 +379,59 @@ const styles = StyleSheet.create({
     height: '100%',
   },
   profileName: {
-    fontSize: 24,
-    fontWeight: typography.fontWeight.bold,
+    fontSize: 22,
+    fontWeight: '900',
     color: colors.maroon,
     textAlign: 'center',
-    marginBottom: 4,
+    marginBottom: 2,
   },
   profileSubtext: {
-    fontSize: 15,
-    fontWeight: typography.fontWeight.medium,
+    fontSize: 13,
+    fontWeight: '600',
     color: colors.textSecondary,
     textAlign: 'center',
+  },
+  cardIdBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF3E0',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginTop: 6,
+    gap: 5,
+  },
+  cardIdText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: colors.saffronDark,
   },
   divider: {
     height: 1,
     width: '100%',
     backgroundColor: colors.border,
-    marginVertical: spacing.md,
+    marginVertical: 10,
   },
   sectionHeader: {
-    fontSize: 12,
-    fontWeight: typography.fontWeight.bold,
+    fontSize: 11,
+    fontWeight: '800',
     color: colors.textSecondary,
     textTransform: 'uppercase',
-    letterSpacing: 1,
-    marginBottom: spacing.sm,
+    letterSpacing: 0.8,
+    marginBottom: spacing.xs,
     alignSelf: 'flex-start',
   },
   chipsRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     width: '100%',
-    marginBottom: spacing.md,
+    marginBottom: spacing.sm,
+    gap: 6,
   },
   chip: {
-    borderRadius: 20,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs + 2,
-    marginRight: spacing.xs + 2,
-    marginBottom: spacing.xs + 2,
+    borderRadius: 16,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     borderWidth: 1,
   },
   infoChip: {
@@ -334,45 +439,49 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(93, 0, 30, 0.2)',
   },
   dindiChip: {
-    backgroundColor: 'rgba(230, 81, 0, 0.08)',
-    borderColor: 'rgba(230, 81, 0, 0.25)',
+    backgroundColor: '#FFF3E0',
+    borderColor: '#FFE0B2',
   },
   bloodChip: {
-    backgroundColor: 'rgba(211, 47, 47, 0.08)',
-    borderColor: 'rgba(211, 47, 47, 0.25)',
-  },
-  allergyChip: {
-    backgroundColor: 'rgba(245, 124, 0, 0.08)',
-    borderColor: 'rgba(245, 124, 0, 0.25)',
+    backgroundColor: '#FFEBEE',
+    borderColor: '#FFCDD2',
   },
   conditionChip: {
-    backgroundColor: 'rgba(93, 0, 30, 0.08)',
-    borderColor: 'rgba(93, 0, 30, 0.25)',
+    backgroundColor: '#F3E5F5',
+    borderColor: '#E1BEE7',
+  },
+  allergyChip: {
+    backgroundColor: '#FFF8E1',
+    borderColor: '#FFECB3',
+  },
+  safeChip: {
+    backgroundColor: '#E8F5E9',
+    borderColor: '#C8E6C9',
   },
   chipText: {
-    fontSize: 13,
-    fontWeight: typography.fontWeight.bold,
+    fontSize: 12,
+    fontWeight: '700',
     color: colors.text,
   },
   captionRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(46, 125, 50, 0.06)',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    backgroundColor: '#E8F5E9',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
     borderRadius: 12,
     width: '100%',
+    gap: 6,
   },
   captionIcon: {
     fontSize: 14,
-    marginRight: spacing.xs,
   },
   captionText: {
     flex: 1,
-    fontSize: 12,
-    fontWeight: typography.fontWeight.medium,
-    color: colors.success,
-    lineHeight: 16,
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#1B5E20',
+    lineHeight: 15,
   },
   bottomArea: {
     width: '100%',
@@ -381,21 +490,21 @@ const styles = StyleSheet.create({
   },
   confirmButton: {
     width: '100%',
-    minHeight: 56,
+    minHeight: 54,
     backgroundColor: colors.saffronDark,
     borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
     shadowColor: colors.saffronDark,
-    shadowOffset: { width: 0, height: 6 },
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
-    shadowRadius: 10,
-    elevation: 6,
-    marginBottom: spacing.md,
+    shadowRadius: 8,
+    elevation: 5,
+    marginBottom: spacing.xs,
   },
   confirmButtonText: {
-    fontSize: 18,
-    fontWeight: typography.fontWeight.bold,
+    fontSize: 17,
+    fontWeight: '800',
     color: colors.surface,
     letterSpacing: 0.5,
   },
@@ -403,8 +512,8 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
   },
   notMeText: {
-    fontSize: 15,
-    fontWeight: '600',
+    fontSize: 14,
+    fontWeight: '700',
     color: colors.maroon,
     textDecorationLine: 'underline',
   },

@@ -50,7 +50,7 @@ export const RoleSelectScreen: React.FC<OnboardingScreenProps<'RoleSelect'>> = (
   const handleContinue = () => {
     // Persist selected role for post-onboarding dashboard routing
     setUserRole(selectedRole);
-    navigation.navigate('MobileNumber');
+    navigation.navigate('MobileNumber', { selectedRole });
   };
 
   return (

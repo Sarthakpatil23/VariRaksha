@@ -9,21 +9,30 @@ import {
   Platform,
   TouchableWithoutFeedback,
   Keyboard,
+  ActivityIndicator,
+  Vibration,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { Ionicons } from '@expo/vector-icons';
 import { OnboardingScreenProps } from '../../navigation/types';
 import { colors, spacing, typography } from '../../constants';
+import { sendPhoneOTP } from '../../services/authService';
+import { getUserRole } from '../../lib/userStore';
 
 export const MobileNumberScreen: React.FC<OnboardingScreenProps<'MobileNumber'>> = ({
+  route,
   navigation,
 }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isMarathi = i18n.language === 'mr';
+  const role = route.params?.selectedRole || getUserRole();
+
   const [mobileNumber, setMobileNumber] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
-  // Sanitize input to allow strictly 10 numeric digits
+  // Auto-format phone input (allow only 10 numeric digits)
   const handleTextChange = (text: string) => {
     const numericOnly = text.replace(/[^0-9]/g, '');
     if (numericOnly.length <= 10) {
@@ -36,19 +45,39 @@ export const MobileNumberScreen: React.FC<OnboardingScreenProps<'MobileNumber'>>
 
   const isValid = mobileNumber.length === 10;
 
-  const handleContinue = () => {
-    // Validate client-side before submission
-    if (!isValid) {
-      setErrorMessage(t('mobileInputError', 'Please enter a valid 10-digit mobile number'));
+  const handleContinue = async () => {
+    if (!isValid || isLoading) {
+      setErrorMessage(
+        isMarathi
+          ? 'कृपया १० अंकी वैध मोबाईल नंबर प्रविष्ट करा'
+          : 'Please enter a valid 10-digit mobile number',
+      );
       return;
     }
 
+    Keyboard.dismiss();
+    setIsLoading(true);
     setErrorMessage('');
 
-    // TODO: Replace with real Supabase Auth SMS OTP trigger endpoint
-    // e.g. await supabase.auth.signInWithOtp({ phone: `+91${mobileNumber}` })
-
-    navigation.navigate('OTPVerification', { mobileNumber });
+    try {
+      const res = await sendPhoneOTP(mobileNumber);
+      if (res.success) {
+        Vibration.vibrate(25);
+        navigation.navigate('OTPVerification', {
+          mobileNumber,
+          selectedRole: role,
+        });
+      } else {
+        setErrorMessage(
+          res.message ||
+            (isMarathi ? 'ओटीपी पाठवता आला नाही' : 'Failed to send OTP'),
+        );
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Connection error');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -79,14 +108,16 @@ export const MobileNumberScreen: React.FC<OnboardingScreenProps<'MobileNumber'>>
             {/* Header Section */}
             <View style={styles.headerSection}>
               <Text style={styles.title}>
-                {t('enterMobileTitle', 'Enter your mobile number')}
+                {isMarathi ? 'मोबाईल नंबर प्रविष्ट करा' : 'Enter your mobile number'}
               </Text>
               <Text style={styles.subtext}>
-                {t('enterMobileSubtext', "We'll find your registration details")}
+                {isMarathi
+                  ? 'आम्ही तुमची दिंडी व वारकरी नोंदणी माहिती शोधू'
+                  : "We'll find your pilgrimage registration details"}
               </Text>
             </View>
 
-            {/* Input Row Container */}
+            {/* Input Row Container with Native Autofill metadata */}
             <View style={styles.inputContainer}>
               {/* Fixed Country Code Badge (+91) */}
               <View style={styles.countryCodeBadge}>
@@ -103,20 +134,37 @@ export const MobileNumberScreen: React.FC<OnboardingScreenProps<'MobileNumber'>>
                 keyboardType="number-pad"
                 maxLength={10}
                 autoFocus={true}
+                autoComplete="tel"
+                textContentType="telephoneNumber"
+                importantForAutofill="yes"
                 accessibilityLabel="Mobile Number Input"
               />
+
+              {mobileNumber.length > 0 && (
+                <TouchableOpacity
+                  onPress={() => setMobileNumber('')}
+                  style={styles.clearBtn}
+                >
+                  <Ionicons name="close-circle" size={20} color={colors.textSecondary} />
+                </TouchableOpacity>
+              )}
             </View>
 
             {/* Inline Validation Error Message */}
             {errorMessage ? (
-              <Text style={styles.errorText}>{errorMessage}</Text>
+              <View style={styles.errorContainer}>
+                <Ionicons name="alert-circle" size={16} color={colors.error} />
+                <Text style={styles.errorText}>{errorMessage}</Text>
+              </View>
             ) : null}
 
             {/* Reassurance Badge */}
             <View style={styles.reassuranceContainer}>
               <Text style={styles.reassuranceIcon}>🛡️</Text>
               <Text style={styles.reassuranceText}>
-                {t('safeInfoReassurance', 'Your information is safe')}
+                {isMarathi
+                  ? 'तुमचा डेटा वारी सुरक्षा प्रणालीमध्ये सुरक्षित आहे'
+                  : 'Your information is encrypted and safe with VariRaksha'}
               </Text>
             </View>
           </View>
@@ -126,17 +174,21 @@ export const MobileNumberScreen: React.FC<OnboardingScreenProps<'MobileNumber'>>
             <TouchableOpacity
               activeOpacity={0.85}
               onPress={handleContinue}
-              disabled={!isValid}
+              disabled={!isValid || isLoading}
               style={[
                 styles.continueButton,
-                !isValid && styles.disabledButton,
+                (!isValid || isLoading) && styles.disabledButton,
               ]}
               accessibilityRole="button"
-              accessibilityState={{ disabled: !isValid }}
+              accessibilityState={{ disabled: !isValid || isLoading }}
             >
-              <Text style={styles.continueButtonText}>
-                {t('continueButton', 'Continue')}
-              </Text>
+              {isLoading ? (
+                <ActivityIndicator size="small" color={colors.surface} />
+              ) : (
+                <Text style={styles.continueButtonText}>
+                  {isMarathi ? 'ओटीपी मिळवा (Get OTP)' : 'Send OTP'}
+                </Text>
+              )}
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
@@ -171,15 +223,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  backArrow: {
-    fontSize: 20,
-    lineHeight: 20,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.maroon,
-    textAlign: 'center',
-    textAlignVertical: 'center',
-    includeFontPadding: false,
-  },
   brandBadge: {
     backgroundColor: 'rgba(93, 0, 30, 0.1)',
     paddingHorizontal: spacing.md,
@@ -204,13 +247,13 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 26,
-    fontWeight: typography.fontWeight.bold,
+    fontWeight: '900',
     color: colors.maroon,
     marginBottom: spacing.xs,
-    lineHeight: typography.lineHeight.xl,
+    lineHeight: 32,
   },
   subtext: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: typography.fontWeight.medium,
     color: colors.textSecondary,
     lineHeight: typography.lineHeight.md,
@@ -238,23 +281,31 @@ const styles = StyleSheet.create({
     marginRight: spacing.sm,
   },
   countryCodeText: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: typography.fontWeight.bold,
     color: colors.maroon,
   },
   textInput: {
     flex: 1,
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: typography.fontWeight.bold,
     color: colors.text,
     letterSpacing: 1.5,
+  },
+  clearBtn: {
+    padding: 6,
+  },
+  errorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: spacing.xs,
+    marginLeft: spacing.xs,
   },
   errorText: {
     color: colors.error,
     fontSize: 13,
     fontWeight: typography.fontWeight.medium,
-    marginTop: spacing.xs,
-    marginLeft: spacing.xs,
   },
   reassuranceContainer: {
     flexDirection: 'row',
@@ -267,9 +318,10 @@ const styles = StyleSheet.create({
     marginRight: 6,
   },
   reassuranceText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: typography.fontWeight.medium,
     color: colors.textSecondary,
+    flex: 1,
   },
   bottomArea: {
     width: '100%',
