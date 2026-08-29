@@ -24,12 +24,12 @@ import { useUserProfile } from '../../lib/userStore';
 import { translateUserProfile } from '../../utils/translator';
 
 import { SOSReportModal, SOSReportData } from '../../components/sos/SOSReportModal';
-import { BleMeshStatusBanner } from '../../components/sos/BleMeshStatusBanner';
 import { bleMeshManager } from '../../services/bleMeshManager';
 import {
   createEmergencySOS,
   subscribeToSingleAlert,
   fetchAlertById,
+  onOfflineAlertSynced,
   EmergencyAlert,
 } from '../../services/alertService';
 
@@ -135,8 +135,8 @@ export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
           // BLE Mesh Broadcast is active — show Bluetooth-specific messaging
           setIsBleBroadcasting(true);
           Alert.alert(
-            t('sosBleMeshTitle', '📡 SOS Broadcasting via Bluetooth'),
-            t('sosBleMeshDesc', 'No internet detected. Your SOS is being broadcast to nearby volunteers via Bluetooth mesh. Keep Bluetooth ON.'),
+            '📡 Offline SOS Recorded',
+            'Your emergency SOS has been recorded and dispatched to nearby volunteer responders.',
           );
 
           // Listen for BLE mesh events (e.g., ACK from volunteer)
@@ -212,6 +212,22 @@ export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
     };
   }, [activeSosAlert?.id, activeSosAlert?.status]);
 
+  // Synchronize when an offline SOS is synced to cloud in background
+  useEffect(() => {
+    const unsub = onOfflineAlertSynced((offlineId, syncedAlert) => {
+      setActiveSosAlert((current) => {
+        if (current && current.id === offlineId) {
+          console.log('[HomeSOSScreen] Offline alert synced to Supabase! Upgraded ID:', syncedAlert.id);
+          setIsBleBroadcasting(false);
+          return syncedAlert;
+        }
+        return current;
+      });
+    });
+
+    return () => unsub();
+  }, []);
+
   const handleOpenVoiceBlob = () => {
     navigation.navigate('Chat');
   };
@@ -237,7 +253,7 @@ export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
       handleCallLeader();
     } else if (actionType === 'medical_sos') {
       setChatModalVisible(false);
-      setMedicalModalVisible(true);
+      setSosReportModalVisible(true);
     }
   };
 
@@ -293,11 +309,6 @@ export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
             </Text>
           </View>
         </View>
-
-        {/* BLE MESH BROADCASTING STATUS BANNER */}
-        {isBleBroadcasting && (
-          <BleMeshStatusBanner mode="broadcasting" />
-        )}
 
         {/* LIVE SOS ALERT NOTIFICATION BANNER */}
         {activeSosAlert && (

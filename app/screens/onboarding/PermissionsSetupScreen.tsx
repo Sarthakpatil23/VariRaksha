@@ -16,7 +16,6 @@ import { colors, spacing, typography } from '../../constants';
 import {
   useDevicePermissions,
   requestLocationCapability,
-  requestBluetoothCapability,
   openDeviceAppSettings,
 } from '../../services/permissionService';
 
@@ -38,8 +37,6 @@ export const PermissionsSetupScreen: React.FC<
   const [denialMessage, setDenialMessage] = useState<string | null>(null);
 
   const isLocationReady = status.location.state === 'enabled';
-  const isBluetoothReady = status.bluetooth.state === 'enabled';
-  const isAllReady = isLocationReady && isBluetoothReady;
 
   const handleRequestLocation = async () => {
     Vibration.vibrate(20);
@@ -64,20 +61,10 @@ export const PermissionsSetupScreen: React.FC<
     }
   };
 
-  const handleRequestBluetooth = async () => {
-    Vibration.vibrate(20);
-    setIsRequesting(true);
-    setDenialMessage(null);
-    await requestBluetoothCapability();
-    await refreshPermissions();
-    setIsRequesting(false);
-  };
-
   const handlePrimaryCTA = async () => {
     Vibration.vibrate(30);
 
-    // If both are ready, proceed to MainApp
-    if (isAllReady) {
+    if (isLocationReady) {
       navigateToMainApp();
       return;
     }
@@ -85,38 +72,25 @@ export const PermissionsSetupScreen: React.FC<
     setIsRequesting(true);
     setDenialMessage(null);
 
-    // 1. Request Location if not ready
-    if (!isLocationReady) {
-      await requestLocationCapability();
-    }
-    // 2. Request Bluetooth if not ready
-    if (!isBluetoothReady) {
-      await requestBluetoothCapability();
-    }
-
+    await requestLocationCapability();
     const fresh = await refreshPermissions();
     setIsRequesting(false);
 
-    if (fresh.allReady || (fresh.location.state === 'enabled' && isBluetoothReady)) {
+    if (fresh.location.state === 'enabled' || fresh.location.permissionGranted) {
       Vibration.vibrate([0, 100, 50, 100]);
       navigateToMainApp();
       return;
     }
 
-    // Check if permanently denied
-    const isPermanentlyBlocked =
-      fresh.location.state === 'permanently_denied' ||
-      fresh.bluetooth.state === 'permanently_denied';
-
-    if (isPermanentlyBlocked) {
+    if (fresh.location.state === 'permanently_denied') {
       setDenialMessage(
         isMarathi
-          ? 'आवश्यक परवानग्या सेटिंग्जमध्ये प्रतिबंधित आहेत. कृपया सेटिंग्ज उघडून परवानगी द्या.'
+          ? 'स्थान परवानगी सेटिंग्जमध्ये प्रतिबंधित आहे. कृपया सेटिंग्ज उघडून परवानगी द्या.'
           : isHindi
-          ? 'आवश्यक अनुमतियां सेटिंग्स में अवरुद्ध हैं। कृपया सेटिंग्स खोलें और अनुमति दें।'
-          : 'Required permissions are restricted in device settings. Please tap "Open Settings" to enable them manually.',
+          ? 'स्थान अनुमति सेटिंग्स में अवरुद्ध है। कृपया सेटिंग्स खोलें और अनुमति दें।'
+          : 'Location permission is restricted in device settings. Please tap "Open Settings" to enable it manually.',
       );
-    } else if (!fresh.location.permissionGranted) {
+    } else {
       setDenialMessage(
         isMarathi
           ? 'वारी सुरक्षेसाठी स्थान (GPS) परवानगी अनिवार्य आहे.'
@@ -136,9 +110,7 @@ export const PermissionsSetupScreen: React.FC<
     }
   };
 
-  const isBlocked =
-    status.location.state === 'permanently_denied' ||
-    status.bluetooth.state === 'permanently_denied';
+  const isBlocked = status.location.state === 'permanently_denied';
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -170,17 +142,17 @@ export const PermissionsSetupScreen: React.FC<
             </View>
             <Text style={styles.title}>
               {isMarathi
-                ? 'ब्लूटूथ व स्थान (GPS) सेटअप'
+                ? 'स्थान (GPS) सेटअप'
                 : isHindi
-                ? 'ब्लूटूथ और लोकेशन सेटअप'
-                : 'Bluetooth + Location Setup'}
+                ? 'लोकेशन (GPS) सेटअप'
+                : 'Location (GPS) Setup'}
             </Text>
             <Text style={styles.subtitle}>
               {isMarathi
-                ? 'आपत्कालीन SOS व मदतनीसांशी तात्काळ संपर्कासाठी दोन्ही सुविधा चालू असणे आवश्यक आहे.'
+                ? 'आपत्कालीन SOS व मदतनीसांशी तात्काळ संपर्कासाठी अचूक स्थान सेवा चालू असणे आवश्यक आहे.'
                 : isHindi
-                ? 'आपातकालीन SOS और स्वयंसेवकों से त्वरित संपर्क के लिए दोनों सुविधाएं अनिवार्य हैं।'
-                : 'Mandatory device capabilities to ensure instant SOS response and nearby volunteer discovery along the Palkhi Marg.'}
+                ? 'आपातकालीन SOS और स्वयंसेवकों से त्वरित संपर्क के लिए लोकेशन सेवा अनिवार्य है।'
+                : 'Mandatory location capability to ensure instant SOS response and nearby volunteer assistance along the Palkhi Marg.'}
             </Text>
           </View>
 
@@ -203,91 +175,7 @@ export const PermissionsSetupScreen: React.FC<
             </View>
           )}
 
-          {/* 1. BLUETOOTH CAPABILITY CARD */}
-          <View
-            style={[
-              styles.capabilityCard,
-              isBluetoothReady ? styles.cardEnabled : styles.cardRequired,
-            ]}
-          >
-            <View style={styles.cardHeaderRow}>
-              <View
-                style={[
-                  styles.cardIconBox,
-                  { backgroundColor: isBluetoothReady ? '#DCFCE7' : '#E0F2FE' },
-                ]}
-              >
-                <Ionicons
-                  name="bluetooth"
-                  size={24}
-                  color={isBluetoothReady ? '#15803D' : '#0284C7'}
-                />
-              </View>
-
-              <View style={styles.cardTextCol}>
-                <View style={styles.cardTitleRow}>
-                  <Text style={styles.cardTitle}>
-                    {isMarathi ? 'ब्लूटूथ (Bluetooth)' : 'Bluetooth'}
-                  </Text>
-                  <View
-                    style={[
-                      styles.statusPill,
-                      isBluetoothReady ? styles.statusPillEnabled : styles.statusPillRequired,
-                    ]}
-                  >
-                    {isBluetoothReady && (
-                      <Ionicons name="checkmark" size={12} color="#15803D" style={{ marginRight: 2 }} />
-                    )}
-                    <Text
-                      style={[
-                        styles.statusPillText,
-                        isBluetoothReady ? styles.statusTextEnabled : styles.statusTextRequired,
-                      ]}
-                    >
-                      {isBluetoothReady
-                        ? isMarathi
-                          ? 'सक्रिय (Enabled)'
-                          : 'Enabled'
-                        : isMarathi
-                        ? 'आवश्यक (Required)'
-                        : 'Required'}
-                    </Text>
-                  </View>
-                </View>
-
-                <Text style={styles.cardDesc}>
-                  {isMarathi
-                    ? 'इंटरनेट नसतानाही जवळच्या स्वयंसेवक व वारकऱ्यांशी इमर्जन्सी मेष रिले'
-                    : 'Required for nearby emergency communication & offline volunteer relay'}
-                </Text>
-              </View>
-            </View>
-
-            {!isBluetoothReady ? (
-              <TouchableOpacity
-                activeOpacity={0.85}
-                onPress={handleRequestBluetooth}
-                style={styles.enableInlineBtn}
-              >
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Ionicons name="bluetooth-outline" size={16} color="#0284C7" />
-                  <Text style={styles.enableInlineBtnText}>
-                    {isMarathi ? 'ब्लूटूथ चालू करा' : 'Turn On Bluetooth'}
-                  </Text>
-                </View>
-                <Ionicons name="chevron-forward" size={14} color="#0284C7" />
-              </TouchableOpacity>
-            ) : (
-              <View style={styles.readyIndicatorRow}>
-                <Ionicons name="checkmark-circle" size={15} color="#15803D" />
-                <Text style={styles.readyIndicatorText}>
-                  {isMarathi ? 'ब्लूटूथ सक्रिय आहे' : 'Bluetooth Active'}
-                </Text>
-              </View>
-            )}
-          </View>
-
-          {/* 2. LOCATION (GPS) CAPABILITY CARD */}
+          {/* LOCATION (GPS) CAPABILITY CARD */}
           <View
             style={[
               styles.capabilityCard,
@@ -381,7 +269,7 @@ export const PermissionsSetupScreen: React.FC<
             <Text style={styles.privacyNoteText}>
               {isMarathi
                 ? 'गोपनीयता हमी: तुमचे स्थान केवळ पालखी मार्गावरील सुरक्षा व SOS मदतीसाठीच वापरले जाते.'
-                : 'Privacy Guaranteed: Your location and Bluetooth are strictly used for Wari safety and SOS dispatch.'}
+                : 'Privacy Guaranteed: Your location is strictly used for Wari safety and emergency SOS dispatch.'}
             </Text>
           </View>
         </ScrollView>
@@ -407,7 +295,7 @@ export const PermissionsSetupScreen: React.FC<
             disabled={isRequesting}
             style={[
               styles.primaryButton,
-              isAllReady ? styles.primaryButtonReady : styles.primaryButtonEnable,
+              isLocationReady ? styles.primaryButtonReady : styles.primaryButtonEnable,
             ]}
           >
             {isRequesting || isChecking ? (
@@ -415,16 +303,16 @@ export const PermissionsSetupScreen: React.FC<
             ) : (
               <>
                 <Text style={styles.primaryButtonText}>
-                  {isAllReady
+                  {isLocationReady
                     ? isMarathi
                       ? 'पुढे सुरू ठेवा (Continue)'
                       : 'Continue to Application'
                     : isMarathi
-                    ? 'परवानग्या चालू करा आणि पुढे जा'
+                    ? 'स्थान परवानगी द्या आणि पुढे जा'
                     : 'Enable & Continue'}
                 </Text>
                 <Ionicons
-                  name={isAllReady ? 'arrow-forward' : 'shield-checkmark-outline'}
+                  name={isLocationReady ? 'arrow-forward' : 'shield-checkmark-outline'}
                   size={18}
                   color="#FFFFFF"
                   style={{ marginLeft: 8 }}
@@ -452,38 +340,36 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: spacing.sm,
+    paddingVertical: spacing.sm,
   },
   backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(93, 0, 30, 0.08)',
-    justifyContent: 'center',
-    alignItems: 'center',
+    padding: spacing.xs,
   },
   brandBadge: {
+    backgroundColor: '#FFF8F0',
     paddingHorizontal: 12,
     paddingVertical: 5,
-    borderRadius: 14,
-    backgroundColor: 'rgba(93, 0, 30, 0.06)',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#E8DED2',
   },
   brandTitle: {
     fontSize: 13,
-    fontWeight: typography.fontWeight.bold,
+    fontWeight: '700',
     color: colors.maroon,
+    letterSpacing: 0.3,
   },
   topBarSpacer: {
-    width: 40,
+    width: 32,
   },
   scrollContent: {
-    paddingBottom: spacing.xl,
+    paddingBottom: 120,
+    paddingTop: spacing.sm,
   },
   headerSection: {
     alignItems: 'center',
-    marginTop: spacing.sm,
-    marginBottom: spacing.lg,
-    textAlign: 'center',
+    marginBottom: spacing.xl,
+    paddingHorizontal: spacing.sm,
   },
   shieldIconContainer: {
     width: 64,
@@ -493,71 +379,71 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: spacing.md,
-    borderWidth: 2,
-    borderColor: '#BBF7D0',
+    borderWidth: 1.5,
+    borderColor: '#86EFAC',
   },
   title: {
     fontSize: 22,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.maroon,
+    fontWeight: '800',
+    color: colors.text,
     textAlign: 'center',
-    marginBottom: 6,
+    marginBottom: spacing.xs,
   },
   subtitle: {
-    fontSize: 13,
+    fontSize: 14,
     color: colors.textSecondary,
     textAlign: 'center',
-    lineHeight: 19,
-    paddingHorizontal: spacing.sm,
+    lineHeight: 20,
   },
   warningCard: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     backgroundColor: '#FEF2F2',
     borderWidth: 1,
-    borderColor: '#FCA5A5',
+    borderColor: '#FECACA',
     borderRadius: 14,
-    padding: 12,
-    marginBottom: spacing.md,
+    padding: 14,
+    marginBottom: spacing.lg,
   },
   warningTitle: {
-    fontSize: 13,
-    fontWeight: '800',
+    fontSize: 14,
+    fontWeight: '700',
     color: '#991B1B',
     marginBottom: 2,
   },
   warningDesc: {
     fontSize: 12,
     color: '#B91C1C',
-    lineHeight: 16,
+    lineHeight: 17,
   },
   capabilityCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 20,
+    borderRadius: 18,
     padding: 16,
     borderWidth: 1.5,
-    marginBottom: 14,
-    shadowColor: '#000',
+    marginBottom: spacing.lg,
+    shadowColor: '#2B1A09',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
-    shadowRadius: 6,
+    shadowRadius: 5,
     elevation: 2,
   },
   cardEnabled: {
     borderColor: '#86EFAC',
-    backgroundColor: '#F0FDF4',
+    backgroundColor: '#FAFCF8',
   },
   cardRequired: {
-    borderColor: '#E2E8F0',
+    borderColor: '#FECACA',
+    backgroundColor: '#FFFFFF',
   },
   cardHeaderRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
   },
   cardIconBox: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 44,
+    height: 44,
+    borderRadius: 12,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
@@ -567,14 +453,14 @@ const styles = StyleSheet.create({
   },
   cardTitleRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'space-between',
     marginBottom: 4,
   },
   cardTitle: {
     fontSize: 16,
-    fontWeight: typography.fontWeight.bold,
-    color: '#1E293B',
+    fontWeight: '800',
+    color: colors.text,
   },
   statusPill: {
     flexDirection: 'row',
@@ -587,40 +473,41 @@ const styles = StyleSheet.create({
     backgroundColor: '#DCFCE7',
   },
   statusPillRequired: {
-    backgroundColor: '#FEF3C7',
+    backgroundColor: '#FEE2E2',
   },
   statusPillText: {
     fontSize: 11,
-    fontWeight: '800',
+    fontWeight: '700',
   },
   statusTextEnabled: {
     color: '#15803D',
   },
   statusTextRequired: {
-    color: '#B45309',
+    color: '#DC2626',
   },
   cardDesc: {
-    fontSize: 12,
-    color: '#64748B',
-    lineHeight: 17,
+    fontSize: 13,
+    color: colors.textSecondary,
+    lineHeight: 18,
+    marginTop: 2,
   },
   cardErrorDetail: {
     fontSize: 11,
     color: '#DC2626',
-    marginTop: 4,
     fontWeight: '600',
+    marginTop: 6,
   },
   enableInlineBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     backgroundColor: '#F0F9FF',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 12,
-    marginTop: 12,
     borderWidth: 1,
     borderColor: '#BAE6FD',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    marginTop: 14,
   },
   enableInlineBtnText: {
     fontSize: 13,
@@ -631,46 +518,54 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginTop: 10,
-    paddingTop: 8,
+    marginTop: 12,
+    paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: '#DCFCE7',
+    borderTopColor: '#F3F4F6',
   },
   readyIndicatorText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '700',
     color: '#15803D',
   },
   privacyNoteBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F8FAFC',
-    padding: 12,
+    backgroundColor: '#F9FAFB',
     borderRadius: 12,
-    marginTop: spacing.xs,
+    padding: 12,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#E5E7EB',
+    marginTop: spacing.sm,
   },
   privacyNoteText: {
-    fontSize: 11,
-    color: '#64748B',
-    lineHeight: 15,
+    fontSize: 12,
+    color: '#6B7280',
     flex: 1,
+    lineHeight: 16,
   },
   bottomBar: {
-    paddingVertical: spacing.md,
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
     backgroundColor: colors.background,
-    gap: 10,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.lg,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    gap: 8,
   },
   openSettingsButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#E0F2FE',
-    paddingVertical: 12,
-    borderRadius: 14,
+    backgroundColor: '#F0F9FF',
     borderWidth: 1,
-    borderColor: '#BAE6FD',
+    borderColor: '#0284C7',
+    borderRadius: 14,
+    paddingVertical: 12,
   },
   openSettingsButtonText: {
     fontSize: 14,
@@ -683,22 +578,24 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: 15,
     borderRadius: 16,
-    shadowColor: '#000',
     shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.18,
-    shadowRadius: 6,
-    elevation: 4,
+    shadowOpacity: 0.15,
+    shadowRadius: 5,
+    elevation: 3,
   },
   primaryButtonReady: {
-    backgroundColor: '#15803D',
+    backgroundColor: colors.maroon,
+    shadowColor: colors.maroon,
   },
   primaryButtonEnable: {
-    backgroundColor: colors.maroon,
+    backgroundColor: '#DC2626',
+    shadowColor: '#DC2626',
   },
   primaryButtonText: {
-    fontSize: 16,
-    fontWeight: typography.fontWeight.bold,
     color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '800',
+    letterSpacing: 0.2,
   },
 });
 
