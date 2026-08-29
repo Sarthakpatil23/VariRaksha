@@ -624,6 +624,10 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     fontWeight: '500',
   },
+  aiDialogTextWrapper: {
+    alignItems: 'center',
+    width: '100%',
+  },
   bottomBar: {
     flexDirection: 'row',
     alignItems: 'center',
