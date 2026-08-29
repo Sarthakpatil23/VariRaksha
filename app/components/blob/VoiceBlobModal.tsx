@@ -19,9 +19,13 @@ import { ThinkingOrb } from './ThinkingOrb';
 import { sendUserChatMessage, ChatPersona } from '../../lib/chatStore';
 import {
   useUserProfile,
+  getUserProfile,
+  setUserProfile,
   getUserLanguagePreference,
   setUserLanguagePreference,
 } from '../../lib/userStore';
+import { fetchCurrentUserProfile } from '../../services/authService';
+import { FormattedContentRenderer } from '../chat/MessageScroller';
 import {
   transcribeWithSarvam,
   convertTextToSpeech,
@@ -73,6 +77,17 @@ export const VoiceBlobModal: React.FC<VoiceBlobModalProps> = ({
   const [isRecording, setIsRecording] = useState<boolean>(false);
 
   const recordingRef = useRef<Audio.Recording | null>(null);
+
+  // Fetch live Supabase profile on modal open if not yet present in store
+  useEffect(() => {
+    if (visible && !profile) {
+      fetchCurrentUserProfile().then((dbProfile) => {
+        if (dbProfile) {
+          setUserProfile(dbProfile);
+        }
+      });
+    }
+  }, [visible, profile]);
 
   // Initialize and start voice listening when modal opens
   useEffect(() => {
@@ -342,12 +357,17 @@ export const VoiceBlobModal: React.FC<VoiceBlobModalProps> = ({
         : 'वारीरक्षक दिंडी कमांडर वॉइस AI'
       : 'वारीरक्षक AI व्हॉईस सहाय्यक';
 
-  const subtitle =
-    currentLang === 'en'
-      ? `👤 For ${userName}`
-      : currentLang === 'hi'
-      ? `👤 ${userName} के लिए`
-      : `👤 ${userName} यांच्यासाठी`;
+  const ageStr = profile?.age
+    ? ` (${currentLang === 'en' ? 'Age ' : currentLang === 'hi' ? 'आयु ' : 'वय '}${profile.age}${profile.bloodGroup ? ` · ${profile.bloodGroup}` : ''})`
+    : '';
+
+  const subtitle = profile?.fullName
+    ? `👤 ${profile.fullName}${ageStr}`
+    : currentLang === 'en'
+    ? '👤 Live Supabase Database'
+    : currentLang === 'hi'
+    ? '👤 वारी डेटाबेस कनेक्टेड'
+    : '👤 वारी डेटाबेस कनेक्टेड';
 
   return (
     <Modal
@@ -419,12 +439,17 @@ export const VoiceBlobModal: React.FC<VoiceBlobModalProps> = ({
                 </View>
               ) : null}
 
-              <Text style={styles.aiDialogText}>
-                {voiceState === 'processing' ? (
-                  <ActivityIndicator size="small" color={colors.saffronDark} />
-                ) : null}{' '}
-                {aiResponseText}
-              </Text>
+              <View style={styles.aiDialogTextWrapper}>
+                {voiceState === 'processing' && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 6 }}>
+                    <ActivityIndicator size="small" color={colors.saffronDark} />
+                    <Text style={{ fontSize: 13, color: colors.saffronDark, fontWeight: '600' }}>
+                      {currentLang === 'en' ? 'Thinking...' : currentLang === 'hi' ? 'विचार कर रहा हूँ...' : 'विचार करत आहे...'}
+                    </Text>
+                  </View>
+                )}
+                <FormattedContentRenderer content={aiResponseText} isUser={false} />
+              </View>
             </View>
           </View>
 

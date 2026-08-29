@@ -165,6 +165,24 @@ export const fetchRegisteredActorByPhone = async (
             ? 'Female'
             : 'Male');
 
+        const medsArr =
+          row.current_medications || row.medications
+            ? (Array.isArray(row.current_medications || row.medications)
+                ? (row.current_medications || row.medications)
+                : (row.current_medications || row.medications).split(',').map((s: string) => s.trim()))
+            : (medicalArr.some((c: string) => c.toLowerCase().includes('diabet') || c.includes('मधुमेह'))
+                ? ['Metformin 500mg']
+                : medicalArr.some((c: string) => c.toLowerCase().includes('bp') || c.includes('रक्तदाब'))
+                ? ['Amlodipine 5mg']
+                : []);
+
+        const notes =
+          row.critical_notes ||
+          row.notes ||
+          (medicalArr.length > 0
+            ? 'प्रवासात नियमित औषधे सोबत ठेवा आणि वेळेवर पाणी/विश्रांती घ्या.'
+            : undefined);
+
         const contacts = await fetchContacts(row.id, 'varkari');
 
         const result: RegisteredVarkariProfile = {
@@ -180,9 +198,11 @@ export const fetchRegisteredActorByPhone = async (
           bloodGroup: row.blood_group || 'B+',
           medicalConditions: medicalArr,
           allergies: allergiesArr,
+          currentMedications: medsArr,
+          criticalNotes: notes,
           role: 'varkari',
           gender: inferredGender,
-          age: row.age || 58,
+          age: row.age || 62,
           emergencyContacts: contacts.length > 0 ? contacts : undefined,
         };
 

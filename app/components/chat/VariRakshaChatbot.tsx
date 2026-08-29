@@ -29,9 +29,12 @@ import {
 } from '../../lib/chatStore';
 import {
   useUserProfile,
+  getUserProfile,
+  setUserProfile,
   getUserLanguagePreference,
   setUserLanguagePreference,
 } from '../../lib/userStore';
+import { fetchCurrentUserProfile } from '../../services/authService';
 import {
   transcribeWithSarvam,
   convertTextToSpeech,
@@ -141,6 +144,17 @@ export const VariRakshaChatbot: React.FC<VariRakshaChatbotProps> = ({
       setCurrentLang(prefLang);
     }
   }, []);
+
+  // Fetch live Supabase profile on mount if not yet present in store
+  useEffect(() => {
+    if (!profile) {
+      fetchCurrentUserProfile().then((dbProfile) => {
+        if (dbProfile) {
+          setUserProfile(dbProfile);
+        }
+      });
+    }
+  }, [profile]);
 
   // Manage voice mode recording session
   useEffect(() => {
@@ -378,12 +392,17 @@ export const VariRakshaChatbot: React.FC<VariRakshaChatbotProps> = ({
       ? 'वारीरक्षक AI सहाय्यक'
       : 'वारीरक्षक दिंडी कमांडर AI';
 
-  const subtitle =
-    currentLang === 'en'
-      ? `👤 Personalized for ${userName}`
-      : currentLang === 'hi'
-      ? `👤 ${userName} के लिए व्यक्तिगत सहायक`
-      : `👤 ${userName} यांच्यासाठी वैयक्तिक सहाय्यक`;
+  const ageStr = profile?.age
+    ? ` (${currentLang === 'en' ? 'Age ' : currentLang === 'hi' ? 'आयु ' : 'वय '}${profile.age}${profile.bloodGroup ? ` · ${profile.bloodGroup}` : ''})`
+    : '';
+
+  const subtitle = profile?.fullName
+    ? `👤 ${profile.fullName}${ageStr}`
+    : currentLang === 'en'
+    ? '👤 Live Supabase Database'
+    : currentLang === 'hi'
+    ? '👤 वारी डेटाबेस कनेक्टेड'
+    : '👤 वारी डेटाबेस कनेक्टेड';
 
   const currentPresets = PRESET_QUESTIONS[mode][currentLang] || PRESET_QUESTIONS[mode].mr;
 

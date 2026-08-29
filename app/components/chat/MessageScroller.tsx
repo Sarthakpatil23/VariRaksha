@@ -140,6 +140,144 @@ interface MessageScrollerItemProps {
   onActionPress?: (actionType: string) => void;
 }
 
+/**
+ * Inline text formatter for bold (**...**) and emphasized text
+ */
+const renderFormattedInlineText = (
+  text: string,
+  isUser: boolean,
+  baseStyle?: any
+) => {
+  if (!text) return null;
+
+  // Split on bold markdown patterns (**bold** or __bold__)
+  const parts = text.split(/(\*\*[^*]+\*\*|__[^_]+__)/g);
+
+  return parts.map((part, index) => {
+    if (
+      (part.startsWith('**') && part.endsWith('**') && part.length >= 4) ||
+      (part.startsWith('__') && part.endsWith('__') && part.length >= 4)
+    ) {
+      const cleanText = part.slice(2, -2);
+      return (
+        <Text
+          key={`bold-${index}`}
+          style={[
+            baseStyle,
+            isUser ? styles.boldSpanUser : styles.boldSpanAssistant,
+          ]}
+        >
+          {cleanText}
+        </Text>
+      );
+    }
+    return (
+      <Text key={`text-${index}`} style={baseStyle}>
+        {part}
+      </Text>
+    );
+  });
+};
+
+/**
+ * Rich Formatted Content Renderer for Chat Messages
+ * Handles bullet lists (•, -, *), numbered points (1., 2., १., २.), and inline bold highlights
+ */
+export const FormattedContentRenderer: React.FC<{
+  content: string;
+  isUser?: boolean;
+}> = ({ content, isUser = false }) => {
+  if (!content) return null;
+
+  const lines = content.split('\n');
+
+  return (
+    <View style={styles.formattedWrapper}>
+      {lines.map((line, index) => {
+        const trimmed = line.trim();
+
+        // Empty line separator
+        if (!trimmed) {
+          return <View key={`spacer-${index}`} style={styles.paragraphSpacer} />;
+        }
+
+        // Detect bullet or numbered lines: •, -, *, 1., 2., 3., १., २., ३., etc.
+        const listMatch = trimmed.match(
+          /^([•\-\*]|\d+[\.\)]|[\u0966-\u096F]+[\.\)])\s*(.*)$/
+        );
+
+        if (listMatch) {
+          const rawBullet = listMatch[1].trim();
+          const itemBody = listMatch[2].trim();
+
+          const isNumbered =
+            /^\d|[\u0966-\u096F]/.test(rawBullet);
+
+          return (
+            <View key={`list-item-${index}`} style={styles.listItemRow}>
+              <View
+                style={[
+                  styles.listBadge,
+                  isNumbered ? styles.numberedBadge : styles.bulletBadge,
+                  isUser && styles.listBadgeUser,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.listBulletText,
+                    isUser
+                      ? styles.listBulletTextUser
+                      : styles.listBulletTextAssistant,
+                    isNumbered && styles.numberedText,
+                  ]}
+                >
+                  {isNumbered
+                    ? rawBullet.endsWith('.') || rawBullet.endsWith(')')
+                      ? rawBullet
+                      : `${rawBullet}.`
+                    : '•'}
+                </Text>
+              </View>
+
+              <Text
+                style={[
+                  styles.bubbleText,
+                  isUser ? styles.bubbleTextUser : styles.bubbleTextAssistant,
+                  styles.listItemBody,
+                ]}
+              >
+                {renderFormattedInlineText(
+                  itemBody,
+                  isUser,
+                  isUser ? styles.bubbleTextUser : styles.bubbleTextAssistant
+                )}
+              </Text>
+            </View>
+          );
+        }
+
+        // Standard paragraph line
+        return (
+          <Text
+            key={`para-${index}`}
+            style={[
+              styles.bubbleText,
+              isUser ? styles.bubbleTextUser : styles.bubbleTextAssistant,
+              styles.paragraphLine,
+            ]}
+          >
+            {renderFormattedInlineText(
+              line,
+              isUser,
+              isUser ? styles.bubbleTextUser : styles.bubbleTextAssistant
+            )}
+          </Text>
+        );
+      })}
+    </View>
+  );
+};
+
 export const MessageScrollerItem: React.FC<MessageScrollerItemProps> = ({
   message,
   onActionPress,
@@ -161,9 +299,7 @@ export const MessageScrollerItem: React.FC<MessageScrollerItemProps> = ({
   return (
     <View style={[styles.itemRow, isUser ? styles.itemRowUser : styles.itemRowAssistant]}>
       <View style={[styles.bubble, isUser ? styles.bubbleUser : styles.bubbleAssistant]}>
-        <Text style={[styles.bubbleText, isUser ? styles.bubbleTextUser : styles.bubbleTextAssistant]}>
-          {message.content}
-        </Text>
+        <FormattedContentRenderer content={message.content} isUser={isUser} />
 
         {/* Action Button if attached */}
         {hasValidAction && (
@@ -251,7 +387,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-start',
   },
   bubble: {
-    maxWidth: '85%',
+    maxWidth: '88%',
     borderRadius: 18,
     paddingHorizontal: 16,
     paddingVertical: 12,
@@ -266,27 +402,84 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   bubbleAssistant: {
-    backgroundColor: colors.surface,
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#EBD8B8',
     borderBottomLeftRadius: 6,
     shadowColor: colors.maroon,
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
+    shadowOpacity: 0.06,
     shadowRadius: 4,
     elevation: 2,
   },
+  formattedWrapper: {
+    width: '100%',
+  },
+  paragraphLine: {
+    marginVertical: 2,
+  },
+  paragraphSpacer: {
+    height: 8,
+  },
+  listItemRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginVertical: 3,
+    paddingLeft: 2,
+  },
+  listBadge: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
+    marginTop: 2,
+  },
+  bulletBadge: {
+    minWidth: 14,
+  },
+  numberedBadge: {
+    minWidth: 20,
+  },
+  listBadgeUser: {
+    opacity: 0.9,
+  },
+  listBulletText: {
+    fontSize: 15,
+    fontWeight: '700',
+    lineHeight: 22,
+  },
+  listBulletTextUser: {
+    color: '#FFFFFF',
+  },
+  listBulletTextAssistant: {
+    color: colors.maroon,
+  },
+  numberedText: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  listItemBody: {
+    flex: 1,
+  },
   bubbleText: {
     fontSize: 15,
-    lineHeight: 22,
+    lineHeight: 23,
   },
   bubbleTextUser: {
     color: '#FFFFFF',
-    fontWeight: '600',
+    fontWeight: '500',
   },
   bubbleTextAssistant: {
-    color: colors.text,
-    fontWeight: '500',
+    color: '#1C1917',
+    fontWeight: '400',
+  },
+  boldSpanUser: {
+    fontWeight: '800',
+    color: '#FFFFFF',
+    textDecorationLine: 'underline',
+  },
+  boldSpanAssistant: {
+    fontWeight: '700',
+    color: colors.maroon,
   },
   actionButton: {
     flexDirection: 'row',
@@ -295,7 +488,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 14,
-    marginTop: 10,
+    marginTop: 12,
     alignSelf: 'flex-start',
     gap: 6,
     shadowColor: colors.maroon,

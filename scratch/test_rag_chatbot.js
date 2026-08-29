@@ -123,65 +123,72 @@ async function runTests() {
   // -------------------------------------------------------------
   console.log('\n--- 2. Profile Context Assembly & Isolation ---');
 
-  const userRahul = {
-    id: 'user-rahul-123',
-    phone: '9876543210',
-    fullName: 'Rahul Joshi',
+  const varkariTukaram = {
+    id: 'c1111111-1111-1111-1111-111111111101',
+    mobileNumber: '+91 9423010001',
+    fullName: 'Tukaram Namdev More',
     role: 'varkari',
-    age: 62,
+    age: 64,
     gender: 'Male',
-    bloodGroup: 'B+',
-    medicalConditions: ['Diabetes Type 2', 'Hypertension'],
-    allergies: ['Penicillin'],
-    currentMedications: ['Metformin 500mg', 'Amlodipine 5mg'],
-    dindiLeaderName: 'ह.भ.प. सोपानराव महाराज',
+    bloodGroup: 'O+',
+    village: 'Indapur, Pune',
+    medicalConditions: [],
+    allergies: [],
+    dindiName: 'Sant Tukaram Maharaj Palkhi Dindi',
+    dindiNumber: '01',
+    dindiLeaderName: 'H.B.P. Suresh Tukaram Patil',
+    emergencyCardId: 'VK-DEHU01',
     preferredLanguage: 'mr',
   };
 
-  mockSetUserProfile(userRahul);
-  const rahulContext = mockGetUserAIContext(currentUserProfile);
+  const varkariGodavari = {
+    id: 'c2222222-2222-2222-2222-222222222202',
+    mobileNumber: '+91 9423020002',
+    fullName: 'Godavari Laxman Gite',
+    role: 'varkari',
+    age: 72,
+    gender: 'Female',
+    bloodGroup: 'B-',
+    village: 'Shrigonda, Ahmednagar',
+    medicalConditions: ['Cardiac Bypass (2022)', 'Hypertension'],
+    allergies: ['Aspirin'],
+    currentMedications: ['Amlodipine 5mg'],
+    dindiName: 'Sant Dnyaneshwar Maharaj Palkhi Dindi',
+    dindiNumber: '02',
+    dindiLeaderName: 'H.B.P. Vitthalrao Pandurang Gaikwad',
+    emergencyCardId: 'VK-ALN02',
+    preferredLanguage: 'mr',
+  };
+
+  mockSetUserProfile(varkariTukaram);
+  const tukaramContext = mockGetUserAIContext(currentUserProfile);
 
   assert(
-    rahulContext.includes('Rahul Joshi') &&
-    rahulContext.includes('Age: 62') &&
-    rahulContext.includes('Diabetes Type 2') &&
-    rahulContext.includes('Penicillin') &&
-    rahulContext.includes('Metformin 500mg'),
-    'Constructs comprehensive, confidential medical context for User 1 (Rahul)'
+    tukaramContext.includes('Tukaram Namdev More') &&
+    tukaramContext.includes('Age: 64') &&
+    tukaramContext.includes('Blood Group: O+'),
+    'Constructs dynamic medical context for Supabase Varkari 1 (Tukaram More)'
   );
 
   // Test logout and session wipe
   mockClearUserSession();
   const clearedContext = mockGetUserAIContext(currentUserProfile);
   assert(
-    clearedContext.includes('Guest Pilgrim') && !clearedContext.includes('Rahul'),
+    clearedContext.includes('Guest Pilgrim') && !clearedContext.includes('Tukaram'),
     'Multi-user isolation: Logged-out session contains zero residual data'
   );
 
-  // User 2 logs in
-  const userShanta = {
-    id: 'user-shanta-456',
-    phone: '9123456780',
-    fullName: 'Shanta Shinde',
-    role: 'varkari',
-    age: 45,
-    gender: 'Female',
-    bloodGroup: 'O+',
-    medicalConditions: ['Asthma'],
-    allergies: ['Dust'],
-    currentMedications: ['Salbutamol Inhaler'],
-    dindiLeaderName: 'ह.भ.प. ज्ञानेश्वर महाराज',
-    preferredLanguage: 'hi',
-  };
-  mockSetUserProfile(userShanta);
-  const shantaContext = mockGetUserAIContext(currentUserProfile);
+  // User 2 logs in from Supabase
+  mockSetUserProfile(varkariGodavari);
+  const godavariContext = mockGetUserAIContext(currentUserProfile);
 
   assert(
-    shantaContext.includes('Shanta Shinde') &&
-    shantaContext.includes('Asthma') &&
-    !shantaContext.includes('Rahul') &&
-    !shantaContext.includes('Diabetes'),
-    'Multi-user isolation: User 2 (Shanta) context is completely isolated from User 1'
+    godavariContext.includes('Godavari Laxman Gite') &&
+    godavariContext.includes('Age: 72') &&
+    godavariContext.includes('Cardiac Bypass (2022)') &&
+    godavariContext.includes('Blood Group: B-') &&
+    !godavariContext.includes('Tukaram'),
+    'Multi-user isolation: Supabase Varkari 2 (Godavari Gite) context is completely isolated from User 1'
   );
 
   // -------------------------------------------------------------
@@ -193,12 +200,13 @@ async function runTests() {
 
   // Test Case A: Non-medical query (Route / Water) -> Must be Low Risk, show_sos: false
   console.log('Testing Case A: Route & Water Query (Expect Level 1 Low, show_sos: false)...');
-  mockSetUserProfile(userRahul);
+  mockSetUserProfile(varkariTukaram);
   const routeResponse = await askPersonalizedRAG(
     'पुढील पाण्याचे थांबे आणि फलटण मुक्काम किती अंतरावर आहे?',
     'varkari',
     [],
-    'mr'
+    'mr',
+    varkariTukaram
   );
   console.log('   Response Severity:', routeResponse.severity);
   console.log('   Show SOS:', routeResponse.show_sos);
@@ -213,6 +221,12 @@ async function runTests() {
     routeResponse.severity === 'low',
     'Level 1 (Route/Water inquiry) is triaged as low severity'
   );
+  assert(
+    !routeResponse.message.includes('रक्तगट') &&
+    !routeResponse.message.includes('VK-') &&
+    !routeResponse.message.includes('नोंदणीकृत आजार'),
+    'Anti-Spam: General route query answers the logistics question directly without reciting personal health record'
+  );
 
   // Test Case B: Minor Health Condition (Sore feet / blister) -> Must be Low Risk, show_sos: false
   console.log('\nTesting Case B: Foot Blisters (Expect Level 1 Low, show_sos: false)...');
@@ -220,7 +234,8 @@ async function runTests() {
     'लगातार चालल्यामुळे पायात फोड आले आहेत आणि पाय दुखत आहेत, काही मलम किंवा प्रथमोपचार मिळेल का?',
     'varkari',
     [],
-    'mr'
+    'mr',
+    varkariTukaram
   );
   console.log('   Response Severity:', blisterResponse.severity);
   console.log('   Show SOS:', blisterResponse.show_sos);
@@ -230,15 +245,21 @@ async function runTests() {
     blisterResponse.show_sos === false,
     'Level 1 (Foot blisters) provides comfort/care guidance without triggering emergency SOS'
   );
+  assert(
+    !blisterResponse.message.includes('रक्तगट') &&
+    !blisterResponse.message.includes('VK-'),
+    'Anti-Spam: Foot blister query provides footcare guidance without dumping blood group or ID'
+  );
 
-  // Test Case C: Profile-Dependent Chronic Caution (Diabetic patient feeling dizzy) -> Level 2 Caution, show_sos: false
-  console.log('\nTesting Case C: Diabetic Dizziness (Expect Level 2 Caution, considerations for blood sugar, show_sos: false)...');
-  mockSetUserProfile(userRahul); // Rahul has Diabetes & Hypertension
+  // Test Case C: Profile-Dependent Chronic Caution (Godavari Gite feeling dizzy with BP history) -> Level 2 Caution, show_sos: false
+  console.log('\nTesting Case C: Chronic Dizziness (Expect Level 2 Caution, considerations for vitals/BP, show_sos: false)...');
+  mockSetUserProfile(varkariGodavari);
   const diabeticResponse = await askPersonalizedRAG(
     'मला चक्कर आल्यासारखे वाटत आहे आणि खूप घाम फुटला आहे. काय करू?',
     'varkari',
     [],
-    'mr'
+    'mr',
+    varkariGodavari
   );
   console.log('   Response Severity:', diabeticResponse.severity);
   console.log('   Show SOS:', diabeticResponse.show_sos);
@@ -284,7 +305,7 @@ async function runTests() {
   );
 
   // -------------------------------------------------------------
-  // TEST 4: Multilingual Consistency & Switching
+  // TEST 4: Multilingual Response Consistency
   // -------------------------------------------------------------
   console.log('\n--- 4. Multilingual Response Consistency ---');
 
@@ -317,6 +338,70 @@ async function runTests() {
   );
 
   // -------------------------------------------------------------
+  // TEST 5: Direct Age, Blood Group, Conditions & Medications Access (Dynamic Supabase Data)
+  // -------------------------------------------------------------
+  console.log('\n--- 5. Direct Age, Blood Group, Conditions & Medications Access ---');
+
+  mockSetUserProfile(varkariGodavari); // Godavari: Age 72, Blood Group B-, Cardiac Bypass + Hypertension, Amlodipine
+
+  // 5A: Blood Group Inquiry
+  console.log('Testing 5A: Blood Group Inquiry (Godavari Gite)...');
+  const bgResponse = await askPersonalizedRAG('माझा ब्लड ग्रुप आणि रक्तगट काय आहे?', 'varkari', [], 'mr', varkariGodavari);
+  console.log('   Blood Group reply:', bgResponse.message);
+  assert(
+    bgResponse.message.includes('B-') || bgResponse.message.includes('बी-'),
+    'AI accesses and provides the exact Blood Group (B-) from Supabase record'
+  );
+
+  // 5B: Age Inquiry
+  console.log('\nTesting 5B: Age Inquiry (Godavari Gite)...');
+  const ageResponse = await askPersonalizedRAG('माझे वय किती आहे?', 'varkari', [], 'mr', varkariGodavari);
+  console.log('   Age reply:', ageResponse.message);
+  assert(
+    ageResponse.message.includes('72') || ageResponse.message.includes('७२'),
+    'AI accesses and provides the exact Age (72) from Supabase record'
+  );
+
+  // 5C: Medical Conditions & Medications Inquiry
+  console.log('\nTesting 5C: Medical Conditions & Medications Inquiry (Godavari Gite)...');
+  const medCondResponse = await askPersonalizedRAG('माझे कोणते आजार आणि कोणती औषधे आहेत?', 'varkari', [], 'mr', varkariGodavari);
+  console.log('   Conditions & Meds reply:', medCondResponse.message);
+  assert(
+    medCondResponse.message.toLowerCase().includes('cardiac') ||
+    medCondResponse.message.toLowerCase().includes('bypass') ||
+    medCondResponse.message.toLowerCase().includes('hypertension') ||
+    medCondResponse.message.includes('रक्तदाब') ||
+    medCondResponse.message.toLowerCase().includes('amlodipine'),
+    'AI accesses and provides exact Chronic Conditions (Cardiac Bypass & BP) from Supabase record'
+  );
+
+  // 5D: Personalized Walking / Diet Advice
+  console.log('\nTesting 5D: Personalized Precautions Advice (Godavari Gite)...');
+  const adviceResponse = await askPersonalizedRAG('मी चालताना काय काळजी घ्यावी?', 'varkari', [], 'mr', varkariGodavari);
+  console.log('   Personalized Advice reply:', adviceResponse.message.slice(0, 150));
+  assert(
+    adviceResponse.message.includes('72') ||
+    adviceResponse.message.includes('७२') ||
+    adviceResponse.message.includes('औषध') ||
+    adviceResponse.message.includes('विश्रांती'),
+    'AI actively personalizes precautions based on user age (72) and cardiac/BP conditions'
+  );
+
+  // 5E: User 2 (Tukaram More: Age 64, Blood Group O+, Healthy) Isolation Check
+  console.log('\nTesting 5E: User 2 (Tukaram More) Medical Isolation Check...');
+  mockSetUserProfile(varkariTukaram);
+  const tukaramMedResponse = await askPersonalizedRAG('माझा रक्तगट आणि वय काय आहे?', 'varkari', [], 'mr', varkariTukaram);
+  console.log('   User 2 reply:', tukaramMedResponse.message);
+  assert(
+    (tukaramMedResponse.message.includes('O+') || tukaramMedResponse.message.includes('ओ+')) &&
+    (tukaramMedResponse.message.includes('64') || tukaramMedResponse.message.includes('६४')) &&
+    !tukaramMedResponse.message.includes('72') &&
+    !tukaramMedResponse.message.includes('७२') &&
+    !tukaramMedResponse.message.includes('Godavari'),
+    'AI accurately reflects Tukaram More Supabase records without leaking Godavari Gite data'
+  );
+
+  // -------------------------------------------------------------
   // SUMMARY
   // -------------------------------------------------------------
   console.log('\n====================================================');
@@ -324,7 +409,7 @@ async function runTests() {
   console.log('====================================================\n');
 
   if (passedTests === totalTests) {
-    console.log('🎉 ALL TESTS PASSED SUCCESSFULLY! Personalization, RAG, and Triage are rock-solid.');
+    console.log('🎉 ALL TESTS PASSED SUCCESSFULLY! Age, Blood Group, Conditions & Personalization are verified.');
   } else {
     console.error('⚠️ SOME TESTS FAILED. Check logs above.');
     process.exit(1);
