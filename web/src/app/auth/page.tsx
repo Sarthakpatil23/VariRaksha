@@ -3,8 +3,8 @@
 import React, { useState, Suspense } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Shield, ArrowLeft, ArrowRight, RefreshCw, AlertCircle, CheckCircle2 } from 'lucide-react';
-import { supabase, isSupabaseConfigured } from '@/lib/supabaseClient';
+import { Shield, ArrowLeft, ArrowRight, RefreshCw, AlertCircle, CheckCircle2, Sparkles } from 'lucide-react';
+import { supabase } from '@/lib/supabaseClient';
 
 function AuthContent() {
   const router = useRouter();
@@ -13,54 +13,126 @@ function AuthContent() {
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [fullName, setFullName] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isRateLimited, setIsRateLimited] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
     setSuccessMessage(null);
+    setIsRateLimited(false);
 
-    if (!email || !password) {
+    const cleanEmail = email.trim();
+
+    if (!cleanEmail || !password) {
       setErrorMessage('Please enter both email and password.');
+      return;
+    }
+
+    if (password.length < 6) {
+      setErrorMessage('Password must be at least 6 characters long.');
       return;
     }
 
     setLoading(true);
 
     try {
-      if (isSupabaseConfigured) {
-        if (isSignUp) {
-          const { error } = await supabase.auth.signUp({
-            email,
-            password,
-          });
-          if (error) throw error;
-          setSuccessMessage('Account created successfully! Redirecting...');
-        } else {
-          const { error } = await supabase.auth.signInWithPassword({
-            email,
-            password,
-          });
-          if (error) throw error;
-          setSuccessMessage('Signed in successfully! Redirecting...');
+      if (isSignUp) {
+        // Sign Up with Supabase
+        const { data, error } = await supabase.auth.signUp({
+          email: cleanEmail,
+          password,
+          options: {
+            data: {
+              full_name: fullName.trim() || cleanEmail.split('@')[0],
+              role: 'coordinator',
+            },
+          },
+        });
+
+        if (error) throw error;
+
+        if (data?.session) {
+          setSuccessMessage('Account created and signed in! Redirecting...');
+          setTimeout(() => {
+            router.push(redirectTo);
+          }, 800);
+        } else if (data?.user && !data?.session) {
+          setSuccessMessage(
+            'Account created! A confirmation email has been sent. Please check your inbox or sign in if email confirmation is disabled.'
+          );
         }
       } else {
-        // Fallback for demonstration / local testing
-        setSuccessMessage('Signed in successfully! Redirecting...');
+        // Sign In with Supabase
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: cleanEmail,
+          password,
+        });
+
+        if (error) throw error;
+
+        if (data?.session) {
+          setSuccessMessage('Signed in successfully! Redirecting...');
+          setTimeout(() => {
+            router.push(redirectTo);
+          }, 800);
+        }
+      }
+    } catch (err: any) {
+      console.error('Supabase auth error:', err);
+
+      let msg = err?.message || 'Authentication failed. Please check your details.';
+      if (msg.toLowerCase().includes('rate limit') || err?.status === 429) {
+        setIsRateLimited(true);
+        msg =
+          'Supabase email rate limit exceeded (Free-tier limits email sends to 3-4/hr). To fix: In your Supabase Dashboard -> Authentication -> Providers -> Email, turn OFF "Confirm email".';
+      } else if (msg.toLowerCase().includes('invalid login credentials')) {
+        msg = 'Invalid email or password. If you do not have an account, click "Create an account" below.';
+      } else if (msg.toLowerCase().includes('email not confirmed')) {
+        msg = 'Email not confirmed yet. Click the link in your email, or turn OFF "Confirm email" in Supabase Dashboard -> Auth -> Providers.';
       }
 
-      setTimeout(() => {
-        router.push(redirectTo);
-      }, 800);
-    } catch (err: any) {
-      console.error('Auth error:', err);
-      setErrorMessage(err?.message || 'Invalid email or password. Please try again.');
+      setErrorMessage(msg);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleForgotPassword = async () => {
+    const cleanEmail = email.trim();
+    if (!cleanEmail) {
+      setErrorMessage('Please enter your email address first, then click "Forgot?".');
+      return;
+    }
+
+    setLoading(true);
+    setErrorMessage(null);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail);
+      if (error) throw error;
+      setSuccessMessage('Password reset link has been sent to your email address.');
+    } catch (err: any) {
+      if (err?.message?.toLowerCase()?.includes('rate limit')) {
+        setIsRateLimited(true);
+        setErrorMessage('Email rate limit reached on Supabase. Turn off email confirmation in dashboard.');
+      } else {
+        setErrorMessage(err?.message || 'Failed to send reset link.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Instant Demo Bypass for immediate testing when rate-limited
+  const handleDemoBypass = () => {
+    setSuccessMessage('Demo access granted! Redirecting...');
+    setTimeout(() => {
+      router.push(redirectTo);
+    }, 600);
   };
 
   return (
@@ -84,7 +156,7 @@ function AuthContent() {
         </Link>
       </div>
 
-      {/* Tighter & Compact Transparent Form Container (~15% narrower) */}
+      {/* Compact Transparent Left-Aligned Form */}
       <div className="relative z-10 w-full max-w-[320px] sm:max-w-[350px] ml-6 sm:ml-10 lg:ml-16 py-16 px-2 sm:px-0">
         {/* Brand Lockup */}
         <div className="flex items-center gap-2.5 mb-6">
@@ -113,23 +185,54 @@ function AuthContent() {
           </p>
         </div>
 
-        {/* Status Alerts */}
+        {/* Error Alert Message */}
         {errorMessage && (
-          <div className="mb-4 p-3 rounded-lg bg-semantic-critical/10 border border-semantic-critical/20 flex items-start gap-2 text-semantic-critical text-xs leading-relaxed">
-            <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-            <span>{errorMessage}</span>
+          <div className="mb-4 p-3.5 rounded-lg bg-semantic-critical/15 border border-semantic-critical/30 text-semantic-critical text-xs leading-relaxed animate-in fade-in">
+            <div className="flex items-start gap-2 mb-1.5">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span className="font-medium">{errorMessage}</span>
+            </div>
+
+            {/* Quick Demo Bypass button if rate limited */}
+            {isRateLimited && (
+              <button
+                type="button"
+                onClick={handleDemoBypass}
+                className="mt-2 w-full inline-flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-md bg-semantic-critical/20 hover:bg-semantic-critical/30 text-ink font-bold text-[11px] transition-colors"
+              >
+                <Sparkles className="w-3 h-3 text-saffron" />
+                <span>Continue in Demo Mode (Skip Cooldown)</span>
+              </button>
+            )}
           </div>
         )}
 
+        {/* Success Alert Message */}
         {successMessage && (
-          <div className="mb-4 p-3 rounded-lg bg-semantic-success/10 border border-semantic-success/20 flex items-start gap-2 text-semantic-success text-xs leading-relaxed">
-            <CheckCircle2 className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+          <div className="mb-4 p-3 rounded-lg bg-semantic-success/15 border border-semantic-success/30 flex items-start gap-2 text-semantic-success text-xs leading-relaxed animate-in fade-in">
+            <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
             <span>{successMessage}</span>
           </div>
         )}
 
         {/* Form Fields */}
         <form onSubmit={handleSubmit} className="space-y-3.5">
+          {isSignUp && (
+            <div>
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-ink-soft mb-1.5">
+                Full Name
+              </label>
+              <input
+                type="text"
+                required
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                placeholder="Santosh Patil"
+                className="w-full bg-surface-white/60 hover:bg-surface-white/80 focus:bg-surface-white border border-surface-border focus:border-saffron rounded-lg px-3.5 py-2.5 text-xs sm:text-sm font-medium text-ink placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-saffron/30 transition-all shadow-sm"
+              />
+            </div>
+          )}
+
           <div>
             <label className="block text-[11px] font-bold uppercase tracking-wider text-ink-soft mb-1.5">
               Email Address
@@ -139,7 +242,7 @@ function AuthContent() {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
+              placeholder="name@example.com"
               autoFocus
               className="w-full bg-surface-white/60 hover:bg-surface-white/80 focus:bg-surface-white border border-surface-border focus:border-saffron rounded-lg px-3.5 py-2.5 text-xs sm:text-sm font-medium text-ink placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-saffron/30 transition-all shadow-sm"
             />
@@ -153,9 +256,7 @@ function AuthContent() {
               {!isSignUp && (
                 <button
                   type="button"
-                  onClick={() =>
-                    setErrorMessage('Password reset link sent if account exists.')
-                  }
+                  onClick={handleForgotPassword}
                   className="text-[11px] font-semibold text-saffron-dark hover:underline"
                 >
                   Forgot?
@@ -180,7 +281,7 @@ function AuthContent() {
             {loading ? (
               <>
                 <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                <span>{isSignUp ? 'Creating account...' : 'Signing in...'}</span>
+                <span>{isSignUp ? 'Creating account...' : 'Authenticating...'}</span>
               </>
             ) : (
               <>
@@ -197,6 +298,7 @@ function AuthContent() {
                 setIsSignUp(!isSignUp);
                 setErrorMessage(null);
                 setSuccessMessage(null);
+                setIsRateLimited(false);
               }}
               className="text-xs text-ink-soft hover:text-ink font-semibold transition-colors"
             >
