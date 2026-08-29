@@ -31,9 +31,9 @@ export const HeroSection: React.FC = () => {
 
           {/* Large confident headline */}
           <h1 className="text-4xl sm:text-5xl lg:text-[68px] font-bold text-ink tracking-tightest leading-[1.06] mb-6">
-            Protection by your side,<br />
-            every step of the<br />
-            sacred journey.
+            Every step protected,<br />
+            every pilgrim safe<br />
+            on the sacred path.
           </h1>
 
           {/* Supporting copy */}
