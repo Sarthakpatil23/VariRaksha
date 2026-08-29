@@ -16,8 +16,20 @@ import {
   Plus,
   Trash2,
   Crown,
+  Calendar,
+  Users,
+  Droplet,
 } from 'lucide-react';
-import { Vari, StartPoint, DindiLeaderProfile, EmergencyContact } from '@/types/vari';
+import {
+  Vari,
+  StartPoint,
+  DindiLeaderProfile,
+  EmergencyContact,
+  Gender,
+  BloodGroup,
+  BLOOD_GROUPS,
+  GENDERS,
+} from '@/types/vari';
 import { supabase } from '@/lib/supabaseClient';
 
 interface VariFormModalProps {
@@ -44,6 +56,9 @@ export const VariFormModal: React.FC<VariFormModalProps> = ({
   // Dindi Leader Profile Fields (1-to-1 relationship)
   const [leaderName, setLeaderName] = useState('');
   const [leaderPhone, setLeaderPhone] = useState('');
+  const [leaderAge, setLeaderAge] = useState<string>('58');
+  const [leaderGender, setLeaderGender] = useState<Gender>('Male');
+  const [leaderBloodGroup, setLeaderBloodGroup] = useState<BloodGroup>('B+');
   const [leaderVillage, setLeaderVillage] = useState('');
   const [leaderMedicalConditions, setLeaderMedicalConditions] = useState('');
   const [leaderAllergies, setLeaderAllergies] = useState('');
@@ -71,6 +86,9 @@ export const VariFormModal: React.FC<VariFormModalProps> = ({
 
         if (leaderData) {
           setLeaderPhone(leaderData.mobile_number || '');
+          setLeaderAge(leaderData.age ? leaderData.age.toString() : '58');
+          setLeaderGender((leaderData.gender as Gender) || 'Male');
+          setLeaderBloodGroup((leaderData.blood_group as BloodGroup) || 'B+');
           setLeaderVillage(leaderData.village || '');
           setLeaderMedicalConditions(leaderData.medical_conditions || '');
           setLeaderAllergies(leaderData.allergies || '');
@@ -103,6 +121,9 @@ export const VariFormModal: React.FC<VariFormModalProps> = ({
       setStartPoint('Dehu');
       setLeaderName('');
       setLeaderPhone('');
+      setLeaderAge('58');
+      setLeaderGender('Male');
+      setLeaderBloodGroup('B+');
       setLeaderVillage('');
       setLeaderMedicalConditions('');
       setLeaderAllergies('');
@@ -161,6 +182,15 @@ export const VariFormModal: React.FC<VariFormModalProps> = ({
     if (cleanPhone.length < 10) {
       setErrorMessage('Leader mobile number must be at least 10 digits.');
       return;
+    }
+
+    let parsedAge: number | null = null;
+    if (leaderAge) {
+      parsedAge = parseInt(leaderAge, 10);
+      if (isNaN(parsedAge) || parsedAge < 1 || parsedAge > 120) {
+        setErrorMessage('Please enter a valid leader age between 1 and 120.');
+        return;
+      }
     }
 
     if (!cleanVillage) {
@@ -226,26 +256,42 @@ export const VariFormModal: React.FC<VariFormModalProps> = ({
         if (variErr) throw variErr;
         savedVari = variData as Vari;
 
-        // Upsert 1-to-1 Leader Profile
-        const { data: leaderData, error: leaderErr } = await supabase
+        // Upsert 1-to-1 Leader Profile with Age, Gender & Blood Group
+        const leaderPayload: any = {
+          vari_id: savedVari.id,
+          full_name: cleanLeaderName,
+          mobile_number: formattedPhone,
+          age: parsedAge,
+          gender: leaderGender || 'Male',
+          blood_group: leaderBloodGroup || 'B+',
+          village: cleanVillage,
+          medical_conditions: cleanConditions,
+          allergies: cleanAllergies,
+          dindi_name: dindiName,
+          updated_at: new Date().toISOString(),
+        };
+
+        let { data: leaderData, error: leaderErr } = await supabase
           .from('vari_dindi_malaks')
-          .upsert(
-            {
-              vari_id: savedVari.id,
-              full_name: cleanLeaderName,
-              mobile_number: formattedPhone,
-              village: cleanVillage,
-              medical_conditions: cleanConditions,
-              allergies: cleanAllergies,
-              dindi_name: dindiName,
-              updated_at: new Date().toISOString(),
-            },
-            { onConflict: 'vari_id' }
-          )
+          .upsert(leaderPayload, { onConflict: 'vari_id' })
           .select()
           .single();
 
-        if (leaderErr) throw leaderErr;
+        if (leaderErr && leaderErr.message?.includes('column')) {
+          const safePayload = { ...leaderPayload };
+          delete safePayload.age;
+          delete safePayload.gender;
+          delete safePayload.blood_group;
+          const retry = await supabase
+            .from('vari_dindi_malaks')
+            .upsert(safePayload, { onConflict: 'vari_id' })
+            .select()
+            .single();
+          if (retry.error) throw retry.error;
+          leaderData = retry.data;
+        } else if (leaderErr) {
+          throw leaderErr;
+        }
 
         // Update Leader Emergency Contacts
         await supabase
@@ -275,6 +321,9 @@ export const VariFormModal: React.FC<VariFormModalProps> = ({
 
         const fullLeaderProfile: DindiLeaderProfile = {
           ...leaderData,
+          age: parsedAge,
+          gender: leaderGender,
+          blood_group: leaderBloodGroup,
           vari: savedVari,
           emergency_contacts: savedContacts,
         };
@@ -298,24 +347,41 @@ export const VariFormModal: React.FC<VariFormModalProps> = ({
         if (variErr) throw variErr;
         savedVari = variData as Vari;
 
-        // Automatically Create 1-to-1 Dindi Leader Record
-        const { data: leaderData, error: leaderErr } = await supabase
+        // Automatically Create 1-to-1 Dindi Leader Record with Age, Gender & Blood Group
+        const leaderPayload: any = {
+          vari_id: savedVari.id,
+          full_name: cleanLeaderName,
+          mobile_number: formattedPhone,
+          age: parsedAge,
+          gender: leaderGender || 'Male',
+          blood_group: leaderBloodGroup || 'B+',
+          village: cleanVillage,
+          medical_conditions: cleanConditions,
+          allergies: cleanAllergies,
+          dindi_name: dindiName,
+        };
+
+        let { data: leaderData, error: leaderErr } = await supabase
           .from('vari_dindi_malaks')
-          .insert([
-            {
-              vari_id: savedVari.id,
-              full_name: cleanLeaderName,
-              mobile_number: formattedPhone,
-              village: cleanVillage,
-              medical_conditions: cleanConditions,
-              allergies: cleanAllergies,
-              dindi_name: dindiName,
-            },
-          ])
+          .insert([leaderPayload])
           .select()
           .single();
 
-        if (leaderErr) throw leaderErr;
+        if (leaderErr && leaderErr.message?.includes('column')) {
+          const safePayload = { ...leaderPayload };
+          delete safePayload.age;
+          delete safePayload.gender;
+          delete safePayload.blood_group;
+          const retry = await supabase
+            .from('vari_dindi_malaks')
+            .insert([safePayload])
+            .select()
+            .single();
+          if (retry.error) throw retry.error;
+          leaderData = retry.data;
+        } else if (leaderErr) {
+          throw leaderErr;
+        }
 
         // Insert Leader Emergency Contacts
         let savedContacts: EmergencyContact[] = [];
@@ -497,6 +563,67 @@ export const VariFormModal: React.FC<VariFormModalProps> = ({
                   placeholder="e.g. Baramati, Satara, Sangli"
                   className="w-full bg-surface-white border border-surface-border focus:border-saffron rounded-xl px-3.5 py-2.5 text-xs sm:text-sm font-semibold text-ink focus:outline-none"
                 />
+              </div>
+            </div>
+
+            {/* Leader Age, Gender & Blood Group */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-muted mb-1">
+                  Leader Age (वय)
+                </label>
+                <div className="relative">
+                  <Calendar className="w-3.5 h-3.5 text-muted absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="number"
+                    min={1}
+                    max={120}
+                    value={leaderAge}
+                    onChange={(e) => setLeaderAge(e.target.value)}
+                    placeholder="e.g. 58"
+                    className="w-full bg-surface-white border border-surface-border focus:border-saffron rounded-xl pl-9 pr-3 py-2 text-xs font-semibold text-ink focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-muted mb-1">
+                  Leader Gender (लिंग)
+                </label>
+                <div className="relative">
+                  <Users className="w-3.5 h-3.5 text-muted absolute left-3 top-1/2 -translate-y-1/2" />
+                  <select
+                    value={leaderGender}
+                    onChange={(e) => setLeaderGender(e.target.value as Gender)}
+                    className="w-full bg-surface-white border border-surface-border focus:border-saffron rounded-xl pl-9 pr-3 py-2 text-xs font-bold text-ink focus:outline-none appearance-none cursor-pointer"
+                  >
+                    {GENDERS.map((g) => (
+                      <option key={g} value={g}>
+                        {g}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-muted mb-1">
+                  Leader Blood Group (रक्तगट)
+                </label>
+                <div className="relative">
+                  <Droplet className="w-3.5 h-3.5 text-maroon absolute left-3 top-1/2 -translate-y-1/2" />
+                  <select
+                    value={leaderBloodGroup}
+                    onChange={(e) => setLeaderBloodGroup(e.target.value as BloodGroup)}
+                    className="w-full bg-surface-white border border-surface-border focus:border-saffron rounded-xl pl-9 pr-3 py-2 text-xs font-extrabold text-ink focus:outline-none appearance-none cursor-pointer"
+                  >
+                    {BLOOD_GROUPS.map((bg) => (
+                      <option key={bg} value={bg}>
+                        {bg}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
             </div>
 

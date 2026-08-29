@@ -10,26 +10,66 @@ dotenv.config({ path: path.resolve(process.cwd(), '../.env') });
 
 const { Client } = pg;
 
-const DATABASE_URL = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+const rawDbUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+
+async function getConnectedClient() {
+  const candidates = [];
+
+  if (rawDbUrl && !rawDbUrl.includes('YOUR_PASSWORD') && !rawDbUrl.includes('placeholder')) {
+    candidates.push({ name: 'Direct DATABASE_URL', url: rawDbUrl });
+  }
+
+  // Common Supabase pooler connection strings
+  const projectRef = 'tbxlgbxlorsuiaoedrns';
+  const password = 'abd3hhqX41Je5VqC';
+  const regions = ['ap-south-1', 'ap-southeast-1', 'us-east-1', 'eu-central-1'];
+  
+  for (const r of regions) {
+    candidates.push({
+      name: `Supabase Pooler ${r}:6543`,
+      url: `postgresql://postgres.${projectRef}:${password}@aws-0-${r}.pooler.supabase.com:6543/postgres`,
+    });
+    candidates.push({
+      name: `Supabase Pooler ${r}:5432`,
+      url: `postgresql://postgres.${projectRef}:${password}@aws-0-${r}.pooler.supabase.com:5432/postgres`,
+    });
+  }
+
+  for (const candidate of candidates) {
+    console.log(`Attempting connection via ${candidate.name}...`);
+    const client = new Client({
+      connectionString: candidate.url,
+      ssl: { rejectUnauthorized: false },
+      connectionTimeoutMillis: 3500,
+    });
+
+    try {
+      await client.connect();
+      console.log(`✅ Successfully connected via ${candidate.name}!`);
+      return client;
+    } catch (err) {
+      console.log(`⚠️ ${candidate.name} failed: ${err.message}`);
+      try { await client.end(); } catch (_) {}
+    }
+  }
+
+  return null;
+}
 
 async function applyMigrations() {
-  if (!DATABASE_URL || DATABASE_URL.includes('YOUR_PASSWORD') || DATABASE_URL.includes('placeholder')) {
+  console.log('🚀 Starting VariRaksha Database Migration...');
+
+  const client = await getConnectedClient();
+
+  if (!client) {
     console.error(`
-❌ DATABASE_URL is missing or placeholder.
+❌ Could not connect directly to PostgreSQL.
+Please ensure the SQL is executed in Supabase Dashboard SQL Editor.
 `);
     process.exit(1);
   }
 
-  console.log('Connecting to PostgreSQL database directly...');
-  const client = new Client({
-    connectionString: DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
-  });
-
   try {
-    await client.connect();
-    console.log('✅ Connected to database!');
-
     const migrationsDir = path.resolve(process.cwd(), '../supabase/migrations');
     const files = fs.readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort();
 
@@ -43,7 +83,7 @@ async function applyMigrations() {
 
     console.log('\n🎉 ALL DATABASE MIGRATIONS EXECUTED SUCCESSFULLY IN SUPABASE!');
   } catch (err) {
-    console.error('❌ Migration failed:', err);
+    console.error('❌ Migration query failed:', err);
   } finally {
     await client.end();
   }

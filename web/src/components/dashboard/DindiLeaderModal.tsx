@@ -226,13 +226,13 @@ export const DindiLeaderModal: React.FC<DindiLeaderModalProps> = ({
         .from('vari_actor_emergency_contacts')
         .delete()
         .eq('actor_id', leader.id)
-        .eq('actor_type', 'dindi_leader');
+        .eq('actor_type', 'dindi_malak');
 
       let savedContacts: EmergencyContact[] = [];
       if (validContacts.length > 0) {
         const contactPayloads = validContacts.map((c) => ({
           actor_id: leader.id,
-          actor_type: 'dindi_leader',
+          actor_type: 'dindi_malak',
           name: c.name,
           phone_number: c.phone_number,
         }));
@@ -247,6 +247,9 @@ export const DindiLeaderModal: React.FC<DindiLeaderModalProps> = ({
 
       const mergedLeader: DindiLeaderProfile = {
         ...(updatedData as DindiLeaderProfile),
+        age: parsedAge,
+        gender: gender,
+        blood_group: bloodGroup,
         vari: { ...leader.vari!, dindi_leader_name: cleanName },
         varkari_count: leader.varkari_count,
         emergency_contacts: savedContacts,
