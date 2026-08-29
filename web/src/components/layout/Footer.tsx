@@ -1,5 +1,6 @@
 import React from 'react';
-import { Shield, Heart, ArrowUp } from 'lucide-react';
+import Image from 'next/image';
+import { Heart, ArrowUp } from 'lucide-react';
 
 export const Footer: React.FC = () => {
   return (
@@ -9,8 +10,14 @@ export const Footer: React.FC = () => {
           {/* Brand Col */}
           <div className="lg:col-span-2 space-y-4">
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-xl bg-saffron flex items-center justify-center text-surface-white font-bold">
-                <Shield className="w-4 h-4" />
+              <div className="relative w-9 h-9 rounded-xl overflow-hidden shadow-sm flex-shrink-0 bg-surface-white/10 p-0.5">
+                <Image
+                  src="/logo.png"
+                  alt="VariRaksha Logo"
+                  width={36}
+                  height={36}
+                  className="w-full h-full object-contain"
+                />
               </div>
               <div className="flex items-baseline gap-2">
                 <span className="font-extrabold text-xl tracking-tight text-surface-white">

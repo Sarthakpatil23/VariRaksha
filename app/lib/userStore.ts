@@ -2,8 +2,17 @@ import { useState, useEffect } from 'react';
 
 export type UserRole = 'varkari' | 'pilgrim' | 'dindiLeader' | 'volunteer' | 'medicalStaff';
 
+export interface ProfileEmergencyContact {
+  id?: string;
+  name: string;
+  phoneNumber: string;
+  relationship?: string;
+  isPrimary?: boolean;
+}
+
 export interface UserProfile {
   id?: string;
+  variId?: string;
   fullName: string;
   mobileNumber: string;
   village?: string;
@@ -17,6 +26,13 @@ export interface UserProfile {
   role: UserRole;
   age?: number;
   gender?: string;
+  specialization?: string;
+  medicalCampLocation?: string;
+  assignedSector?: string;
+  dutyType?: string;
+  totalPilgrims?: number;
+  palkhiRoute?: string;
+  emergencyContacts?: ProfileEmergencyContact[];
 }
 
 let currentRole: UserRole = 'varkari';

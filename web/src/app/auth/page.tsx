@@ -2,8 +2,9 @@
 
 import React, { useState, Suspense } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Shield, ArrowLeft, ArrowRight, RefreshCw, AlertCircle, CheckCircle2, Sparkles } from 'lucide-react';
+import { ArrowLeft, ArrowRight, RefreshCw, AlertCircle, CheckCircle2, Sparkles } from 'lucide-react';
 import { supabase } from '@/lib/supabaseClient';
 
 function AuthContent() {
@@ -159,9 +160,16 @@ function AuthContent() {
       {/* Compact Transparent Left-Aligned Form */}
       <div className="relative z-10 w-full max-w-[320px] sm:max-w-[350px] ml-6 sm:ml-10 lg:ml-16 py-16 px-2 sm:px-0">
         {/* Brand Lockup */}
-        <div className="flex items-center gap-2.5 mb-6">
-          <div className="w-8 h-8 rounded-lg bg-saffron flex items-center justify-center text-surface-white shadow-sm">
-            <Shield className="w-4 h-4" />
+        <div className="flex items-center gap-3 mb-6">
+          <div className="relative w-9 h-9 rounded-lg overflow-hidden shadow-sm flex-shrink-0">
+            <Image
+              src="/logo.png"
+              alt="VariRaksha Logo"
+              width={36}
+              height={36}
+              className="w-full h-full object-contain"
+              priority
+            />
           </div>
           <div className="flex items-baseline gap-1.5">
             <span className="font-extrabold text-xl tracking-tight text-ink">

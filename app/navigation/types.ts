@@ -20,7 +20,8 @@ export type PilgrimTabParamList = {
   Chat: undefined;
   Calendar: undefined;
   Dindi: undefined;
-  Settings: undefined;
+  Profile: undefined;
+  Settings?: undefined;
   Medical?: undefined;
 };
 
@@ -32,19 +33,22 @@ export type DindiLeaderTabParamList = {
   Chat: undefined;
   DindiMembers: undefined;
   Broadcast: undefined;
-  Settings: undefined;
+  Profile: undefined;
+  Settings?: undefined;
 };
 
 export type VolunteerTabParamList = {
   VolunteerDashboard: undefined;
   VolunteerTasks: undefined;
-  Settings: undefined;
+  Profile: undefined;
+  Settings?: undefined;
 };
 
 export type MedicalStaffTabParamList = {
   MedicalStaffDashboard: undefined;
   PatientRecords: undefined;
-  Settings: undefined;
+  Profile: undefined;
+  Settings?: undefined;
 };
 
 export type RootStackParamList = {

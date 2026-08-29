@@ -9,7 +9,7 @@ import HomeSOSScreen from '../screens/home/HomeSOSScreen';
 import ChatScreen from '../screens/chat/ChatScreen';
 import CalendarScheduleScreen from '../screens/calendar/CalendarScheduleScreen';
 import DindiGroupScreen from '../screens/dindi/DindiGroupScreen';
-import SettingsScreen from '../screens/settings/SettingsScreen';
+import ProfileScreen from '../screens/profile/ProfileScreen';
 
 const Tab = createBottomTabNavigator<PilgrimTabParamList>();
 
@@ -78,12 +78,12 @@ export const PilgrimNavigator: React.FC = () => {
         }}
       />
       <Tab.Screen
-        name="Settings"
-        component={SettingsScreen}
+        name="Profile"
+        component={ProfileScreen}
         options={{
-          title: t('settings', 'Settings'),
+          title: t('profile', 'Profile'),
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="settings-sharp" size={size} color={color} />
+            <Ionicons name="person-circle-sharp" size={size} color={color} />
           ),
         }}
       />

@@ -1,23 +1,7 @@
 import { supabase } from '../lib/supabaseClient';
-import { UserRole } from '../lib/userStore';
+import { UserRole, UserProfile } from '../lib/userStore';
 
-export interface RegisteredVarkariProfile {
-  id: string;
-  variId?: string;
-  fullName: string;
-  mobileNumber: string;
-  village?: string;
-  dindiName?: string;
-  dindiNumber?: string;
-  dindiLeaderName?: string;
-  emergencyCardId?: string;
-  bloodGroup?: string;
-  medicalConditions?: string[];
-  allergies?: string[];
-  role: UserRole;
-  age?: number;
-  gender?: string;
-}
+export type RegisteredVarkariProfile = UserProfile;
 
 /**
  * Format 10-digit Indian phone number to E.164 standard (+919876543210)
@@ -132,6 +116,27 @@ export const fetchRegisteredActorByPhone = async (
       .ilike('mobile_number', `%${tenDigit}%`)
       .limit(1);
 
+    // Helper to fetch emergency contacts for actor
+    const fetchContacts = async (actorId: string, actorType: string) => {
+      try {
+        const { data: contacts } = await supabase
+          .from('vari_actor_emergency_contacts')
+          .select('*')
+          .eq('actor_id', actorId);
+        if (contacts && contacts.length > 0) {
+          return contacts.map((c: any) => ({
+            id: c.id,
+            name: c.name,
+            phoneNumber: c.phone_number,
+            relationship: c.relationship || 'Emergency Contact',
+          }));
+        }
+      } catch (e) {
+        console.warn('[AuthService] Error fetching actor emergency contacts:', e);
+      }
+      return [];
+    };
+
     if (!varkariErr && varkariRows && varkariRows.length > 0) {
       const row: any = varkariRows[0];
       const variInfo: any = row.vari;
@@ -156,6 +161,8 @@ export const fetchRegisteredActorByPhone = async (
           ? 'Female'
           : 'Male');
 
+      const contacts = await fetchContacts(row.id, 'varkari');
+
       const result: RegisteredVarkariProfile = {
         id: row.id,
         variId: row.vari_id,
@@ -172,9 +179,10 @@ export const fetchRegisteredActorByPhone = async (
         role: 'varkari',
         gender: inferredGender,
         age: row.age || 58,
+        emergencyContacts: contacts.length > 0 ? contacts : undefined,
       };
 
-      console.log('[AuthService] Successfully extracted from vari_varkaris:', result.fullName, 'Age:', result.age, 'Gender:', result.gender, 'Blood:', result.bloodGroup);
+      console.log('[AuthService] Successfully extracted from vari_varkaris:', result.fullName);
       return result;
     }
 
@@ -204,6 +212,8 @@ export const fetchRegisteredActorByPhone = async (
           ? 'Female'
           : 'Male');
 
+      const contacts = await fetchContacts(row.id, 'dindi_malak');
+
       const result: RegisteredVarkariProfile = {
         id: row.id,
         variId: row.vari_id,
@@ -220,6 +230,9 @@ export const fetchRegisteredActorByPhone = async (
         role: 'dindiLeader',
         gender: inferredGender,
         age: row.age || 58,
+        totalPilgrims: row.total_pilgrims || 150,
+        palkhiRoute: row.palkhi_route || (variInfo ? `${variInfo.start_point} -> Pandharpur` : 'Main Palkhi Marg'),
+        emergencyContacts: contacts.length > 0 ? contacts : undefined,
       };
 
       console.log('[AuthService] Successfully extracted from vari_dindi_malaks:', result.fullName);
@@ -229,14 +242,17 @@ export const fetchRegisteredActorByPhone = async (
     // 3. TERTIARY LOOKUP: Query public.vari_volunteers
     const { data: volunteerRows } = await supabase
       .from('vari_volunteers')
-      .select('*')
+      .select('*, vari:vari_id(*)')
       .ilike('mobile_number', `%${tenDigit}%`)
       .limit(1);
 
     if (volunteerRows && volunteerRows.length > 0) {
       const row: any = volunteerRows[0];
+      const contacts = await fetchContacts(row.id, 'volunteer');
+
       return {
         id: row.id,
+        variId: row.vari_id,
         fullName: row.full_name,
         mobileNumber: row.mobile_number || `+91 ${tenDigit}`,
         village: row.village || 'महाराष्ट्र',
@@ -249,40 +265,167 @@ export const fetchRegisteredActorByPhone = async (
         role: 'volunteer',
         gender: row.gender || 'Male',
         age: row.age || 26,
+        assignedSector: row.assigned_sector || 'Sector 1 (Alankapuram)',
+        dutyType: row.duty_type || 'Crowd & Queue Safety',
+        emergencyContacts: contacts.length > 0 ? contacts : undefined,
       };
     }
 
-    // 4. QUATERNARY LOOKUP: Query public.profiles
+    // 4. QUATERNARY LOOKUP: Query public.vari_medical_staff
+    const { data: medicalRows } = await supabase
+      .from('vari_medical_staff')
+      .select('*, vari:vari_id(*)')
+      .ilike('mobile_number', `%${tenDigit}%`)
+      .limit(1);
+
+    if (medicalRows && medicalRows.length > 0) {
+      const row: any = medicalRows[0];
+      const contacts = await fetchContacts(row.id, 'medical_staff');
+
+      return {
+        id: row.id,
+        variId: row.vari_id,
+        fullName: row.full_name,
+        mobileNumber: row.mobile_number || `+91 ${tenDigit}`,
+        village: row.village || 'महाराष्ट्र',
+        dindiName: 'वैद्यकीय पथक (Medical Camp)',
+        dindiNumber: 'MED-01',
+        emergencyCardId: `MD-${tenDigit.slice(-4)}`,
+        bloodGroup: row.blood_group || 'A+',
+        medicalConditions: [],
+        allergies: [],
+        role: 'medicalStaff',
+        gender: row.gender || 'Male',
+        age: row.age || 36,
+        specialization: row.specialization || 'General Emergency & Trauma',
+        medicalCampLocation: row.medical_camp_location || 'Mobile Ambulance Unit 1',
+        emergencyContacts: contacts.length > 0 ? contacts : undefined,
+      };
+    }
+
+    // 5. QUINARY LOOKUP: Query public.profiles + medical_profiles + emergency_contacts
     const { data: profileRows } = await supabase
       .from('profiles')
-      .select('*')
+      .select(`
+        *,
+        medical_profiles (*),
+        emergency_contacts (*)
+      `)
       .ilike('mobile_number', `%${tenDigit}%`)
       .limit(1);
 
     if (profileRows && profileRows.length > 0) {
       const p: any = profileRows[0];
+      const med = Array.isArray(p.medical_profiles) ? p.medical_profiles[0] : p.medical_profiles;
+      const emContacts = Array.isArray(p.emergency_contacts)
+        ? p.emergency_contacts.map((c: any) => ({
+            id: c.id,
+            name: c.name,
+            phoneNumber: c.phone_number,
+            relationship: c.relationship,
+            isPrimary: c.is_primary,
+          }))
+        : [];
+
+      let userRole: UserRole = 'varkari';
+      if (p.role === 'dindi_leader' || p.role === 'dindiLeader') userRole = 'dindiLeader';
+      else if (p.role === 'volunteer') userRole = 'volunteer';
+      else if (p.role === 'medical_staff' || p.role === 'medicalStaff') userRole = 'medicalStaff';
+      else if (p.role === 'pilgrim' || p.role === 'varkari') userRole = 'varkari';
+
       return {
         id: p.id,
         fullName: p.full_name || 'वारकरी भाविक',
         mobileNumber: p.mobile_number || `+91 ${tenDigit}`,
         emergencyCardId: p.emergency_card_id || `VK-${tenDigit.slice(-6)}`,
-        bloodGroup: p.blood_group || 'B+',
-        medicalConditions: [],
-        allergies: [],
+        bloodGroup: med?.blood_group || p.blood_group || 'B+',
+        medicalConditions: med?.chronic_conditions || [],
+        allergies: med?.allergies || [],
         dindiName: 'संत ज्ञानेश्वर माऊली दिंडी क्र. १२',
         dindiNumber: '12',
-        role: (p.role as UserRole) || role,
+        role: userRole,
         village: 'महाराष्ट्र',
         gender: p.gender || 'Male',
         age: p.age || 55,
+        emergencyContacts: emContacts.length > 0 ? emContacts : undefined,
       };
     }
 
-    console.log('[AuthService] No record found in vari_varkaris for phone:', tenDigit);
+    console.log('[AuthService] No record found for phone:', tenDigit);
     return null;
   } catch (err) {
     console.error('[AuthService] fetchRegisteredActorByPhone database error:', err);
     return null;
+  }
+};
+
+/**
+ * Universal profile fetcher for currently authenticated or active session user
+ */
+export const fetchCurrentUserProfile = async (
+  cachedProfile?: UserProfile | null,
+): Promise<UserProfile | null> => {
+  try {
+    // 1. Try to get authenticated Supabase user session
+    const { data: { user } } = await supabase.auth.getUser();
+    const phone = user?.phone || user?.user_metadata?.mobileNumber || cachedProfile?.mobileNumber;
+
+    if (phone) {
+      const refreshed = await fetchRegisteredActorByPhone(phone, cachedProfile?.role || 'varkari');
+      if (refreshed) {
+        return refreshed;
+      }
+    }
+
+    if (user?.id) {
+      const { data: profileRows } = await supabase
+        .from('profiles')
+        .select('*, medical_profiles(*), emergency_contacts(*)')
+        .eq('id', user.id)
+        .limit(1);
+
+      if (profileRows && profileRows.length > 0) {
+        const p: any = profileRows[0];
+        const med = Array.isArray(p.medical_profiles) ? p.medical_profiles[0] : p.medical_profiles;
+        const emContacts = Array.isArray(p.emergency_contacts)
+          ? p.emergency_contacts.map((c: any) => ({
+              id: c.id,
+              name: c.name,
+              phoneNumber: c.phone_number,
+              relationship: c.relationship,
+              isPrimary: c.is_primary,
+            }))
+          : [];
+
+        let uRole: UserRole = 'varkari';
+        if (p.role === 'dindi_leader' || p.role === 'dindiLeader') uRole = 'dindiLeader';
+        else if (p.role === 'volunteer') uRole = 'volunteer';
+        else if (p.role === 'medical_staff' || p.role === 'medicalStaff') uRole = 'medicalStaff';
+
+        return {
+          id: p.id,
+          fullName: p.full_name,
+          mobileNumber: p.mobile_number || phone || '+91 98765 43210',
+          emergencyCardId: p.emergency_card_id || 'VK-WARI01',
+          bloodGroup: med?.blood_group || p.blood_group || 'B+',
+          medicalConditions: med?.chronic_conditions || [],
+          allergies: med?.allergies || [],
+          dindiName: 'संत ज्ञानेश्वर माऊली दिंडी क्र. १२',
+          dindiNumber: '12',
+          role: uRole,
+          village: 'महाराष्ट्र',
+          gender: p.gender || 'Male',
+          age: p.age || 55,
+          emergencyContacts: emContacts.length > 0 ? emContacts : undefined,
+        };
+      }
+    }
+
+    // Return cached profile if no newer database record found
+    return cachedProfile || null;
+  } catch (error) {
+    console.error('[AuthService] fetchCurrentUserProfile error:', error);
+    return cachedProfile || null;
   }
 };
 

@@ -346,6 +346,17 @@ export const translateUserProfile = (
     ? profile.allergies.map((a) => transliterateSentenceToDevanagari(a, targetLang))
     : [];
 
+  // 5. Dynamically transliterate Emergency Contacts
+  const translatedContacts = profile.emergencyContacts
+    ? profile.emergencyContacts.map((c) => ({
+        ...c,
+        name: transliterateSentenceToDevanagari(c.name, targetLang),
+        relationship: c.relationship
+          ? transliterateSentenceToDevanagari(c.relationship, targetLang)
+          : undefined,
+      }))
+    : undefined;
+
   return {
     ...profile,
     fullName: translatedName,
@@ -353,5 +364,6 @@ export const translateUserProfile = (
     dindiName: translatedDindi,
     medicalConditions: translatedConditions,
     allergies: translatedAllergies,
+    emergencyContacts: translatedContacts,
   };
 };

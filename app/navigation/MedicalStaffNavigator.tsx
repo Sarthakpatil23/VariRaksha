@@ -7,7 +7,7 @@ import { colors, typography } from '../constants';
 
 import MedicalStaffDashboardScreen from '../screens/medicalStaff/MedicalStaffDashboardScreen';
 import PatientRecordsScreen from '../screens/medicalStaff/PatientRecordsScreen';
-import SettingsScreen from '../screens/settings/SettingsScreen';
+import ProfileScreen from '../screens/profile/ProfileScreen';
 
 const Tab = createBottomTabNavigator<MedicalStaffTabParamList>();
 
@@ -56,12 +56,12 @@ export const MedicalStaffNavigator: React.FC = () => {
         }}
       />
       <Tab.Screen
-        name="Settings"
-        component={SettingsScreen}
+        name="Profile"
+        component={ProfileScreen}
         options={{
-          title: t('settings', 'Settings'),
+          title: t('profile', 'Profile'),
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="settings-sharp" size={size} color={color} />
+            <Ionicons name="person-circle-sharp" size={size} color={color} />
           ),
         }}
       />

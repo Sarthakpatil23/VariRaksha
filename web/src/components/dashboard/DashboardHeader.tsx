@@ -2,8 +2,9 @@
 
 import React from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
-import { Shield, LogOut, ArrowLeft, Layers } from 'lucide-react';
+import { LogOut, ArrowLeft, Layers } from 'lucide-react';
 import { supabase } from '@/lib/supabaseClient';
 
 interface DashboardHeaderProps {
@@ -36,9 +37,16 @@ export const DashboardHeader: React.FC<DashboardHeaderProps> = ({
       <div className="max-w-7xl mx-auto flex items-center justify-between">
         {/* Left: Brand & Breadcrumbs */}
         <div className="flex items-center gap-6">
-          <Link href="/dashboard" className="flex items-center gap-2.5 group focus:outline-none">
-            <div className="w-8 h-8 rounded-xl bg-saffron flex items-center justify-center text-surface-white shadow-sm group-hover:bg-saffron-dark transition-colors">
-              <Shield className="w-4 h-4" />
+          <Link href="/dashboard" className="flex items-center gap-3 group focus:outline-none">
+            <div className="relative w-8 h-8 rounded-lg overflow-hidden flex-shrink-0 shadow-sm">
+              <Image
+                src="/logo.png"
+                alt="VariRaksha Logo"
+                width={32}
+                height={32}
+                className="w-full h-full object-contain"
+                priority
+              />
             </div>
             <div className="flex items-baseline gap-1.5">
               <span className="font-extrabold text-xl tracking-tight text-ink">

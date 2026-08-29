@@ -39,7 +39,8 @@ export const metadata: Metadata = {
     'Public Safety India',
   ],
   icons: {
-    icon: '/favicon.ico',
+    icon: '/logo.png',
+    apple: '/logo.png',
   },
 };
 

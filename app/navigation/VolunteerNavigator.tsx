@@ -7,7 +7,7 @@ import { colors, typography } from '../constants';
 
 import VolunteerDashboardScreen from '../screens/volunteer/VolunteerDashboardScreen';
 import VolunteerTasksScreen from '../screens/volunteer/VolunteerTasksScreen';
-import SettingsScreen from '../screens/settings/SettingsScreen';
+import ProfileScreen from '../screens/profile/ProfileScreen';
 
 const Tab = createBottomTabNavigator<VolunteerTabParamList>();
 
@@ -56,12 +56,12 @@ export const VolunteerNavigator: React.FC = () => {
         }}
       />
       <Tab.Screen
-        name="Settings"
-        component={SettingsScreen}
+        name="Profile"
+        component={ProfileScreen}
         options={{
-          title: t('settings', 'Settings'),
+          title: t('profile', 'Profile'),
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="settings-sharp" size={size} color={color} />
+            <Ionicons name="person-circle-sharp" size={size} color={color} />
           ),
         }}
       />

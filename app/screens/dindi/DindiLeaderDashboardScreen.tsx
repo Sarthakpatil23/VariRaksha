@@ -175,8 +175,8 @@ export const DindiLeaderDashboardScreen: React.FC<
     navigation.navigate('DindiMembers');
   };
 
-  const handleOpenSettings = () => {
-    navigation.navigate('Settings');
+  const handleOpenProfile = () => {
+    navigation.navigate('Profile');
   };
 
   const handleMedicalCampSOS = () => {
@@ -284,13 +284,13 @@ export const DindiLeaderDashboardScreen: React.FC<
 
           <TouchableOpacity
             activeOpacity={0.7}
-            onPress={handleOpenSettings}
+            onPress={handleOpenProfile}
             style={styles.headerIconButton}
-            accessibilityLabel="Settings"
+            accessibilityLabel="Profile"
           >
             <Ionicons
-              name="settings-sharp"
-              size={20}
+              name="person-circle-sharp"
+              size={22}
               color={colors.maroon}
             />
           </TouchableOpacity>

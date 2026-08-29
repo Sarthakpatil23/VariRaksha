@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { ArrowRight, Menu, X } from 'lucide-react';
 
 export const Navbar: React.FC = () => {
@@ -30,14 +31,26 @@ export const Navbar: React.FC = () => {
     >
       <div className="max-w-7xl mx-auto px-6 sm:px-8 lg:px-12 flex items-center justify-between">
 
-        {/* Wordmark — clean, no sub-label */}
-        <Link href="/" className="flex items-center gap-2.5 focus:outline-none group">
-          <span className="font-bold text-xl tracking-tight text-ink group-hover:text-saffron transition-colors">
-            VariRaksha
-          </span>
-          <span className="font-devanagari text-sm text-saffron font-semibold leading-none">
-            वारी रक्षा
-          </span>
+        {/* Brand Logo & Wordmark */}
+        <Link href="/" className="flex items-center gap-3 focus:outline-none group">
+          <div className="relative w-8 h-8 rounded-lg overflow-hidden flex-shrink-0 shadow-sm">
+            <Image
+              src="/logo.png"
+              alt="VariRaksha Logo"
+              width={32}
+              height={32}
+              className="w-full h-full object-contain"
+              priority
+            />
+          </div>
+          <div className="flex items-baseline gap-2">
+            <span className="font-bold text-xl tracking-tight text-ink group-hover:text-saffron transition-colors">
+              VariRaksha
+            </span>
+            <span className="font-devanagari text-sm text-saffron font-semibold leading-none">
+              वारी रक्षा
+            </span>
+          </div>
         </Link>
 
         {/* Desktop nav — 3 links max */}
