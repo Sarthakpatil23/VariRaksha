@@ -9,7 +9,7 @@ export {
 } from './chat/MessageScroller';
 export type { ChatMessage } from './chat/MessageScroller';
 export { VariRakshaChatbot } from './chat/VariRakshaChatbot';
-export { AIBlob } from './blob/AIBlob';
+export { AIBlob, ThinkingOrb } from './blob/AIBlob';
 export type { AIBlobProps } from './blob/AIBlob';
 export { VoiceBlobModal } from './blob/VoiceBlobModal';
 export { VarkariInteractiveMap } from './map/VarkariInteractiveMap';
