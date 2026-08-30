@@ -18,6 +18,7 @@ import { colors, spacing, typography } from '../../constants';
 import { useUserProfile, setUserProfile, UserProfile, getUserRole, UserRole } from '../../lib/userStore';
 import { fetchCurrentUserProfile } from '../../services/authService';
 import { translateUserProfile } from '../../utils/translator';
+import { EmergencyQRModal } from '../../components/emergency/EmergencyQRModal';
 
 export const ProfileScreen: React.FC<any> = () => {
   const { t, i18n } = useTranslation();
@@ -30,6 +31,7 @@ export const ProfileScreen: React.FC<any> = () => {
   const [isLoading, setIsLoading] = useState<boolean>(!storeProfile);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [hasError, setHasError] = useState<boolean>(false);
+  const [qrModalVisible, setQrModalVisible] = useState<boolean>(false);
 
   const loadProfile = useCallback(async (showFullLoader: boolean = false) => {
     if (showFullLoader) {
@@ -256,18 +258,23 @@ export const ProfileScreen: React.FC<any> = () => {
             </Text>
           </View>
 
-          {/* Emergency Card Badge */}
-          <View style={styles.emergencyIdBadge}>
+          {/* Emergency Card Badge (Click to open Dynamic QR Pass) */}
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={() => setQrModalVisible(true)}
+            style={styles.emergencyIdBadge}
+          >
             <Ionicons name="id-card-sharp" size={15} color={colors.saffronDark} />
             <Text style={styles.emergencyIdText}>
               {displayProfile.emergencyCardId || 'VK-WARI01'}
             </Text>
             <View style={styles.officialPill}>
               <Text style={styles.officialPillText}>
-                {isMarathi ? 'अधिकृत पास' : 'OFFICIAL PASS'}
+                {isMarathi ? 'अधिकृत QR पास' : 'OFFICIAL QR PASS'}
               </Text>
             </View>
-          </View>
+            <Ionicons name="qr-code" size={15} color={colors.saffronDark} style={{ marginLeft: 4 }} />
+          </TouchableOpacity>
 
           {/* Quick Subtitle Chips */}
           <View style={styles.quickChipsRow}>
@@ -628,6 +635,13 @@ export const ProfileScreen: React.FC<any> = () => {
 
         <View style={styles.bottomSpacer} />
       </ScrollView>
+
+      {/* DYNAMIC EMERGENCY ID QR PASS MODAL */}
+      <EmergencyQRModal
+        visible={qrModalVisible}
+        onClose={() => setQrModalVisible(false)}
+        profile={profile || (displayProfile as any)}
+      />
     </SafeAreaView>
   );
 };

@@ -21,6 +21,7 @@ import {
   MAP_SERVICE_POINTS,
 } from './mapData';
 import { colors, spacing, typography } from '../../constants';
+import { AlertStatus } from '../../services/alertService';
 
 export type MapCategoryFilter =
   | 'all'
@@ -38,7 +39,7 @@ export interface ActiveSOSMapData {
   lng: number;
   pilgrimName: string;
   problemType: string;
-  status: 'nearby' | 'in_progress' | 'arrived' | 'resolved';
+  status: AlertStatus | 'arrived';
   responderName?: string;
   responderPhone?: string;
   claimedAt?: string;
@@ -67,6 +68,7 @@ interface VarkariInteractiveMapProps {
   onCallVolunteer?: (phone: string) => void;
   onResolveSOS?: () => void;
   onVolunteerArrived?: () => void;
+  onEscalateMedical?: () => void;
 }
 
 export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
@@ -79,6 +81,7 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
   onCallVolunteer,
   onResolveSOS,
   onVolunteerArrived,
+  onEscalateMedical,
 }) => {
   const { t, i18n } = useTranslation();
   const lang = (i18n.language || 'mr') as 'mr' | 'hi' | 'en';
@@ -967,6 +970,19 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
               </TouchableOpacity>
             )}
 
+            {onEscalateMedical && (
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={onEscalateMedical}
+                style={styles.hudEscalateBtn}
+              >
+                <Ionicons name="medkit" size={14} color="#FFFFFF" />
+                <Text style={styles.hudEscalateBtnText}>
+                  {isMarathi ? 'वैद्यकीय केंद्र' : 'Medical Camp'}
+                </Text>
+              </TouchableOpacity>
+            )}
+
             {onResolveSOS && (
               <TouchableOpacity
                 activeOpacity={0.8}
@@ -974,7 +990,9 @@ export const VarkariInteractiveMap: React.FC<VarkariInteractiveMapProps> = ({
                 style={styles.hudResolveBtn}
               >
                 <Ionicons name="checkmark-done" size={14} color="#FFFFFF" />
-                <Text style={styles.hudResolveBtnText}>Resolve</Text>
+                <Text style={styles.hudResolveBtnText}>
+                  {isMarathi ? 'इथेच सोडवा' : 'Resolve'}
+                </Text>
               </TouchableOpacity>
             )}
           </View>
@@ -1414,6 +1432,21 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
+  hudEscalateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#DC2626',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+    marginLeft: 6,
+    gap: 4,
+  },
+  hudEscalateBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
   hudResolveBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1421,7 +1454,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 12,
-    marginLeft: 8,
+    marginLeft: 6,
     gap: 4,
   },
   hudResolveBtnText: {

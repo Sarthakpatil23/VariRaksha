@@ -10,6 +10,7 @@ import {
   Vibration,
   ActivityIndicator,
   Linking,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialIcons, FontAwesome5 } from '@expo/vector-icons';
@@ -21,11 +22,13 @@ import {
   ClaimedRouteMapData,
 } from '../../components/map/VarkariInteractiveMap';
 import { VarkariMapModal } from '../../components/map/VarkariMapModal';
+import { EmergencyQRScannerModal } from '../../components/emergency/EmergencyQRScannerModal';
 import { useUserProfile } from '../../lib/userStore';
 import {
   fetchEmergencyAlerts,
   claimEmergencyAlert,
   resolveEmergencyAlert,
+  escalateToMedicalCamp,
   subscribeToEmergencyAlerts,
   createAlertFromBlePacket,
   convertOfflineItemToAlert,
@@ -35,6 +38,10 @@ import {
 } from '../../services/alertService';
 import { bleMeshManager } from '../../services/bleMeshManager';
 import { BleSosPacket, estimateDistanceFromRssi } from '../../services/bleMeshPacket';
+import {
+  sendEmergencyResolvedSMS,
+  fetchEmergencyContactsForPilgrim,
+} from '../../services/smsService';
 
 export const VolunteerDashboardScreen: React.FC<
   VolunteerTabScreenProps<'VolunteerDashboard'>
@@ -54,6 +61,11 @@ export const VolunteerDashboardScreen: React.FC<
   const [modalActiveSos, setModalActiveSos] = useState<ActiveSOSMapData | null>(null);
   const [isBleScanning, setIsBleScanning] = useState<boolean>(false);
   const [lastBleReceived, setLastBleReceived] = useState<{ name: string; distance: string } | null>(null);
+
+  // Medical Camp Escalation State
+  const [isEscalateModalVisible, setIsEscalateModalVisible] = useState<boolean>(false);
+  const [selectedAlertForEscalate, setSelectedAlertForEscalate] = useState<EmergencyAlert | null>(null);
+  const [scannerModalVisible, setScannerModalVisible] = useState<boolean>(false);
 
   const currentVolunteer = {
     id: volunteerId,
@@ -343,6 +355,65 @@ export const VolunteerDashboardScreen: React.FC<
     setMapModalVisible(true);
   };
 
+  // ESCALATE TO MEDICAL CAMP ACTION
+  const handleEscalatePress = (alertItem: EmergencyAlert) => {
+    setSelectedAlertForEscalate(alertItem);
+    setIsEscalateModalVisible(true);
+  };
+
+  const handleConfirmEscalation = async (reason: string) => {
+    if (!selectedAlertForEscalate) return;
+    const targetAlert = selectedAlertForEscalate;
+    setIsEscalateModalVisible(false);
+    Vibration.vibrate(60);
+
+    const targetCamp = {
+      name: 'Wakhari Sector 1 Medical Triage Camp',
+      lat: 17.7145,
+      lng: 75.2440,
+    };
+
+    const { success, alert: escalated, error } = await escalateToMedicalCamp(
+      targetAlert.id,
+      {
+        reason,
+        campName: targetCamp.name,
+        campLat: targetCamp.lat,
+        campLng: targetCamp.lng,
+        volunteerName,
+      },
+    );
+
+    if (error || !success) {
+      Alert.alert('Notice', error || 'Failed to update escalation');
+    }
+
+    if (escalated) {
+      setAlerts((prev) => prev.map((a) => (a.id === escalated.id ? escalated : a)));
+    }
+
+    // Reroute active map navigation to the Medical Camp
+    const campRoute: ClaimedRouteMapData = {
+      volunteerLat: targetAlert.latitude || 17.7120,
+      volunteerLng: targetAlert.longitude || 75.2410,
+      sosLat: targetCamp.lat,
+      sosLng: targetCamp.lng,
+      claimedAt: new Date().toISOString(),
+      durationMs: 30000,
+      pilgrimName: `${targetAlert.pilgrim_name} (Transferring)`,
+      problemType: `🚨 Medical Transfer: ${reason}`,
+      distance: '400m to Camp',
+      eta: '~2 min walk',
+    };
+
+    setActiveClaimedRoute(campRoute);
+
+    Alert.alert(
+      '🚨 Routing to Medical Camp',
+      `Assistance escalated to ${targetCamp.name}.\nMedical officers have received your pre-arrival notice with ${targetAlert.pilgrim_name}'s medical profile.`,
+    );
+  };
+
   // RESOLVE ACTION
   const handleResolve = (alertItem: EmergencyAlert) => {
     Alert.alert(
@@ -369,7 +440,36 @@ export const VolunteerDashboardScreen: React.FC<
             // Immediately remove from active state
             setAlerts((prev) => prev.filter((a) => a.id !== alertItem.id));
             setActiveClaimedRoute(null);
-            Alert.alert('Emergency Resolved', 'Incident marked resolved and removed from live database.');
+
+            // Fetch emergency contacts for the pilgrim
+            const pilgrimIdentifier =
+              alertItem.varkari_id ||
+              alertItem.emergency_card_id ||
+              alertItem.pilgrim_phone ||
+              '';
+            const contacts = await fetchEmergencyContactsForPilgrim(pilgrimIdentifier);
+
+            Alert.alert(
+              '✅ Emergency Resolved',
+              `${alertItem.pilgrim_name}'s incident is closed. Send "Pilgrim is Safe" SMS notification to family/emergency contacts?`,
+              [
+                {
+                  text: 'Close',
+                  style: 'cancel',
+                },
+                {
+                  text: '📱 Send SMS to Family',
+                  onPress: () => {
+                    sendEmergencyResolvedSMS(
+                      alertItem,
+                      contacts,
+                      { name: volunteerName, phone: volunteerPhone },
+                      { language: 'mr' },
+                    );
+                  },
+                },
+              ],
+            );
           },
         },
       ],
@@ -555,6 +655,24 @@ export const VolunteerDashboardScreen: React.FC<
           </TouchableOpacity>
         </View>
 
+        {/* QUICK SCAN PILGRIM QR EMERGENCY PASS BUTTON */}
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={() => setScannerModalVisible(true)}
+          style={styles.scanPilgrimPassStripBtn}
+        >
+          <View style={styles.scanPassIconBox}>
+            <Ionicons name="qr-code" size={18} color="#5D001E" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.scanPassTitle}>Scan Pilgrim ID Pass (QR)</Text>
+            <Text style={styles.scanPassSubtitle}>
+              Check medical conditions, allergies, or trigger SOS for fallen pilgrim
+            </Text>
+          </View>
+          <Ionicons name="scan" size={20} color="#5D001E" />
+        </TouchableOpacity>
+
         {/* 🚨 ACTIVE EMERGENCY DISPATCH CARD (ONLY VISIBLE FOR THE VOLUNTEER WHO CLAIMED IT) */}
         {myClaimedAlert && myClaimedMapRoute && (
           <View style={styles.activeDispatchSectionCard}>
@@ -596,7 +714,16 @@ export const VolunteerDashboardScreen: React.FC<
                 style={styles.topDispatchNavBtn}
               >
                 <Ionicons name="navigate" size={15} color="#FFFFFF" />
-                <Text style={styles.topDispatchNavBtnText}>Open Full Navigation</Text>
+                <Text style={styles.topDispatchNavBtnText}>Navigation</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => handleEscalatePress(myClaimedAlert)}
+                style={styles.topDispatchEscalateBtn}
+              >
+                <Ionicons name="medkit" size={15} color="#FFFFFF" />
+                <Text style={styles.topDispatchEscalateBtnText}>Medical Camp</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -852,6 +979,17 @@ export const VolunteerDashboardScreen: React.FC<
 
                         <TouchableOpacity
                           activeOpacity={0.8}
+                          onPress={() => handleEscalatePress(item)}
+                          style={[styles.claimedActionBtn, styles.claimedEscalateBtn]}
+                        >
+                          <Ionicons name="medkit-outline" size={15} color="#DC2626" />
+                          <Text style={[styles.claimedActionBtnText, { color: '#DC2626' }]}>
+                            Medical Camp
+                          </Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          activeOpacity={0.8}
                           onPress={() => handleCall(item.pilgrim_phone, item.pilgrim_name)}
                           style={styles.claimedActionBtn}
                         >
@@ -1004,6 +1142,95 @@ export const VolunteerDashboardScreen: React.FC<
         onCallVolunteer={(phone) => handleCall(phone)}
         onResolveSOS={() => {
           if (myClaimedAlert) handleResolve(myClaimedAlert);
+        }}
+        onEscalateMedical={() => {
+          if (myClaimedAlert) handleEscalatePress(myClaimedAlert);
+        }}
+      />
+
+      {/* Escalation to Medical Camp Selection Modal */}
+      <Modal
+        visible={isEscalateModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsEscalateModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.escalateModalCard}>
+            <View style={styles.escalateModalHeader}>
+              <View style={styles.escalateIconBadge}>
+                <Ionicons name="medkit" size={24} color="#DC2626" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.escalateModalTitle}>Escalate to Medical Camp</Text>
+                <Text style={styles.escalateModalSubtitle}>
+                  Select condition for {selectedAlertForEscalate?.pilgrim_name || 'Pilgrim'}:
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setIsEscalateModalVisible(false)}
+                style={styles.escalateModalClose}
+              >
+                <Ionicons name="close" size={20} color="#78716C" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.escalateReasonsList}>
+              {[
+                { title: 'Severe Heat Stroke / Sunstroke', desc: 'High body temp, confusion, needs cold sponge & IV', icon: 'sunny' },
+                { title: 'Acute Dehydration (Needs IV Saline)', desc: 'Low BP, severe dry mouth, unable to walk', icon: 'water' },
+                { title: 'Chest Discomfort / Cardiac Concern', desc: 'Chest pressure, shortness of breath, urgent ECG', icon: 'heart' },
+                { title: 'Severe Wound / Deep Laceration / Fracture', desc: 'Heavy bleeding or suspected fracture', icon: 'bandage' },
+                { title: 'Unconscious / Severe Dizziness', desc: 'Fainted on road, unresponsive', icon: 'pulse' },
+              ].map((reasonItem, idx) => (
+                <TouchableOpacity
+                  key={idx}
+                  activeOpacity={0.8}
+                  onPress={() => handleConfirmEscalation(reasonItem.title)}
+                  style={styles.escalateReasonBtn}
+                >
+                  <View style={styles.escalateReasonIconBox}>
+                    <Ionicons name={reasonItem.icon as any} size={18} color="#991B1B" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.escalateReasonTitle}>{reasonItem.title}</Text>
+                    <Text style={styles.escalateReasonDesc}>{reasonItem.desc}</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={16} color="#991B1B" />
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={() => setIsEscalateModalVisible(false)}
+              style={styles.escalateDismissBtn}
+            >
+              <Text style={styles.escalateDismissText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* UNIVERSAL EMERGENCY QR SCANNER MODAL */}
+      <EmergencyQRScannerModal
+        visible={scannerModalVisible}
+        onClose={() => setScannerModalVisible(false)}
+        reporterRole="Volunteer Responder"
+        onSOSDispatched={async (createdAlert) => {
+          if (createdAlert) {
+            const { alert: claimed } = await claimEmergencyAlert(createdAlert.id, currentVolunteer);
+            if (claimed) {
+              setAlerts((prev) =>
+                prioritizeEmergencyAlerts(prev.map((a) => (a.id === claimed.id ? claimed : a))),
+              );
+              handleNavigate(claimed);
+            } else {
+              loadAlerts();
+            }
+          } else {
+            loadAlerts();
+          }
         }}
       />
     </SafeAreaView>
@@ -1764,6 +1991,161 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: '#374151',
+  },
+
+  // ─── Medical Escalation Styles ───
+  topDispatchEscalateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#DC2626',
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    gap: 4,
+    shadowColor: '#DC2626',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  topDispatchEscalateBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  claimedEscalateBtn: {
+    backgroundColor: '#FEE2E2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+
+  // Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+  },
+  escalateModalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    padding: 20,
+    width: '100%',
+    maxWidth: 420,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  escalateModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 16,
+  },
+  escalateIconBadge: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#FEE2E2',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  escalateModalTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#1C1917',
+  },
+  escalateModalSubtitle: {
+    fontSize: 12,
+    color: '#57534E',
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  escalateModalClose: {
+    padding: 4,
+  },
+  escalateReasonsList: {
+    gap: 10,
+    marginBottom: 16,
+  },
+  escalateReasonBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1.5,
+    borderColor: '#FED7AA',
+    borderRadius: 14,
+    padding: 12,
+    gap: 10,
+  },
+  escalateReasonIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#FEE2E2',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  escalateReasonTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#9A3412',
+  },
+  escalateReasonDesc: {
+    fontSize: 11,
+    color: '#78350F',
+    marginTop: 1,
+  },
+  escalateDismissBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+  },
+  escalateDismissText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#78716C',
+  },
+
+  // Scan Pilgrim Pass Button
+  scanPilgrimPassStripBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFDF9',
+    borderWidth: 1.5,
+    borderColor: '#F3E8DF',
+    borderRadius: 18,
+    padding: 12,
+    marginBottom: spacing.md,
+    gap: 10,
+    shadowColor: '#5D001E',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  scanPassIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#F5ECE1',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  scanPassTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#5D001E',
+  },
+  scanPassSubtitle: {
+    fontSize: 11,
+    color: '#78716C',
+    marginTop: 2,
+    lineHeight: 15,
   },
 });
 

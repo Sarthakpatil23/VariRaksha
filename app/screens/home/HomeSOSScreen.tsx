@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   Vibration,
   ScrollView,
   Modal,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
@@ -32,6 +33,11 @@ import {
   onOfflineAlertSynced,
   EmergencyAlert,
 } from '../../services/alertService';
+import { useNetworkStatus } from '../../services/networkService';
+import { getVolunteersForDindi } from '../../services/offlineVolunteersService';
+import { EmergencyQRModal } from '../../components/emergency/EmergencyQRModal';
+import { EmergencyQRScannerModal } from '../../components/emergency/EmergencyQRScannerModal';
+import { sendEmergencySosSMS } from '../../services/smsService';
 
 // Mock Temperature Data & Threshold
 const MOCK_TEMPERATURE_NUMERIC = 34; // 34°C
@@ -69,6 +75,39 @@ export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
   const [mapModalVisible, setMapModalVisible] = useState<boolean>(false);
   const [selectedMapPointId, setSelectedMapPointId] = useState<string | null>(null);
   const [isBleBroadcasting, setIsBleBroadcasting] = useState<boolean>(false);
+
+  // Dynamic Emergency ID & QR Scanner Modals
+  const [qrModalVisible, setQrModalVisible] = useState<boolean>(false);
+  const [scannerModalVisible, setScannerModalVisible] = useState<boolean>(false);
+
+  // Offline Network Detection & Same-Vari Volunteers
+  const { isOffline } = useNetworkStatus();
+  const [offlineModalVisible, setOfflineModalVisible] = useState<boolean>(false);
+  const [hasShownOfflinePrompt, setHasShownOfflinePrompt] = useState<boolean>(false);
+
+  const dindiVolunteers = useMemo(() => {
+    return getVolunteersForDindi(rawProfile?.dindiName || activeProfile.dindiName);
+  }, [rawProfile?.dindiName, activeProfile.dindiName]);
+
+  // When device goes offline, show emergency contact prompt once automatically
+  useEffect(() => {
+    if (isOffline && !hasShownOfflinePrompt) {
+      setOfflineModalVisible(true);
+      setHasShownOfflinePrompt(true);
+    } else if (!isOffline) {
+      setHasShownOfflinePrompt(false);
+    }
+  }, [isOffline, hasShownOfflinePrompt]);
+
+  const handleCallVolunteer = (phone: string, name: string) => {
+    Vibration.vibrate(30);
+    Linking.openURL(`tel:${phone.replace(/\s+/g, '')}`).catch(() => {
+      Alert.alert(
+        'Call Volunteer',
+        `Calling ${name} (${phone})...`,
+      );
+    });
+  };
 
   // Animated progress for 2-second hold interaction
   const progressAnim = useRef(new Animated.Value(0)).current;
@@ -130,6 +169,13 @@ export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
       if (createdAlert) {
         setActiveSosAlert(createdAlert);
         setMapModalVisible(true);
+
+        // ── Dispatch Native SMS to Registered Emergency Contacts ──
+        sendEmergencySosSMS(createdAlert, rawProfile?.emergencyContacts, {
+          language: lang,
+        }).catch((smsErr) => {
+          console.warn('[HomeSOSScreen] Emergency SOS SMS dispatch error:', smsErr);
+        });
 
         if (isOfflineQueued) {
           // BLE Mesh Broadcast is active — show Bluetooth-specific messaging
@@ -228,6 +274,13 @@ export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
     return () => unsub();
   }, []);
 
+  const handleSendFamilySMS = (alertItem: EmergencyAlert) => {
+    Vibration.vibrate(40);
+    sendEmergencySosSMS(alertItem, rawProfile?.emergencyContacts, {
+      language: lang,
+    });
+  };
+
   const handleOpenVoiceBlob = () => {
     navigation.navigate('Chat');
   };
@@ -310,6 +363,98 @@ export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
           </View>
         </View>
 
+        {/* DYNAMIC EMERGENCY ID PASS & UNIVERSAL QR SCANNER STRIP */}
+        <View style={styles.emergencyIdPassStrip}>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => setQrModalVisible(true)}
+            style={styles.passChipBtn}
+          >
+            <Ionicons name="id-card" size={16} color="#5D001E" />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.passChipTitle}>
+                {lang === 'mr' ? 'माझे आपत्कालीन QR ओळखपत्र' : 'My Emergency QR Pass'}
+              </Text>
+              <Text style={styles.passChipSubtitle}>
+                {activeProfile.emergencyCardId || 'VK-DEHU01'} · 🩸 {activeProfile.bloodGroup || 'B+'}
+              </Text>
+            </View>
+            <Ionicons name="qr-code" size={18} color="#5D001E" />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => setScannerModalVisible(true)}
+            style={styles.scanQRPillBtn}
+          >
+            <Ionicons name="scan" size={16} color="#FFFFFF" />
+            <Text style={styles.scanQRPillText}>
+              {lang === 'mr' ? 'QR स्कॅन' : 'Scan QR'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* OFFLINE EMERGENCY VOLUNTEERS BANNER & CARDS */}
+        {isOffline && (
+          <View style={styles.offlineAlertCard}>
+            <View style={styles.offlineCardHeader}>
+              <View style={styles.offlineIconBox}>
+                <Ionicons name="cloud-offline" size={20} color="#DC2626" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Text style={styles.offlineCardTitle}>
+                    {lang === 'mr' ? 'इंटरनेट बंद आहे • दिंडी मदतनीस' : lang === 'hi' ? 'इंटरनेट ऑफलाइन • दिंडी सहायता' : 'Offline Mode • Dindi Volunteers'}
+                  </Text>
+                  <View style={styles.offlineBadge}>
+                    <Text style={styles.offlineBadgeText}>
+                      {lang === 'mr' ? 'ऑफलाइन' : 'OFFLINE'}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={styles.offlineCardSubtitle}>
+                  {lang === 'mr'
+                    ? `तुमच्या दिंडीतील २ स्वयंसेवकांशी थेट फोनवर संपर्क साधा:`
+                    : `Call 2 nearby volunteers from your Dindi directly:`}
+                </Text>
+              </View>
+            </View>
+
+            {/* Volunteer Cards */}
+            <View style={styles.offlineVolunteersList}>
+              {dindiVolunteers.slice(0, 2).map((vol) => (
+                <View key={vol.id} style={styles.volunteerContactItem}>
+                  <View style={styles.volInfoCol}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={styles.volName}>
+                        {lang === 'mr' ? vol.nameMr : vol.name}
+                      </Text>
+                      <View style={styles.volDutyPill}>
+                        <Text style={styles.volDutyPillText}>{vol.availability}</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.volRole}>
+                      🚩 {vol.dindiName} · {lang === 'mr' ? vol.roleMr : vol.role}
+                    </Text>
+                    <Text style={styles.volPhoneText}>📞 {vol.phone}</Text>
+                  </View>
+
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => handleCallVolunteer(vol.phone, lang === 'mr' ? vol.nameMr : vol.name)}
+                    style={styles.volCallButton}
+                  >
+                    <Ionicons name="call" size={15} color="#FFFFFF" style={{ marginRight: 4 }} />
+                    <Text style={styles.volCallButtonText}>
+                      {lang === 'mr' ? 'कॉल करा' : lang === 'hi' ? 'कॉल करें' : 'Call'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
+
         {/* LIVE SOS ALERT NOTIFICATION BANNER */}
         {activeSosAlert && (
           <TouchableOpacity
@@ -362,11 +507,36 @@ export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
               </View>
             </View>
 
-            <View style={styles.homeSosBannerAction}>
-              <Text style={styles.homeSosBannerActionText}>
-                {activeSosAlert.status === 'resolved' ? 'Clear' : 'View Map'}
-              </Text>
-              <Ionicons name="chevron-forward" size={14} color="#FFFFFF" />
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              {activeSosAlert.status !== 'resolved' && (
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    handleSendFamilySMS(activeSosAlert);
+                  }}
+                  style={{
+                    backgroundColor: 'rgba(255,255,255,0.25)',
+                    paddingHorizontal: 9,
+                    paddingVertical: 5,
+                    borderRadius: 12,
+                    marginRight: 8,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                  }}
+                >
+                  <Ionicons name="chatbox-ellipses" size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
+                  <Text style={{ color: '#FFFFFF', fontSize: 11, fontWeight: '700' }}>
+                    SMS
+                  </Text>
+                </TouchableOpacity>
+              )}
+              <View style={styles.homeSosBannerAction}>
+                <Text style={styles.homeSosBannerActionText}>
+                  {activeSosAlert.status === 'resolved' ? 'Clear' : 'View Map'}
+                </Text>
+                <Ionicons name="chevron-forward" size={14} color="#FFFFFF" />
+              </View>
             </View>
           </TouchableOpacity>
         )}
@@ -885,6 +1055,104 @@ export const HomeSOSScreen: React.FC<MainTabScreenProps<'Home'>> = ({
         onClose={() => setSosReportModalVisible(false)}
         onConfirm={handleConfirmSOS}
       />
+
+      {/* DYNAMIC EMERGENCY ID QR DISPLAY MODAL */}
+      <EmergencyQRModal
+        visible={qrModalVisible}
+        onClose={() => setQrModalVisible(false)}
+        profile={rawProfile || (activeProfile as any)}
+      />
+
+      {/* UNIVERSAL EMERGENCY QR SCANNER MODAL */}
+      <EmergencyQRScannerModal
+        visible={scannerModalVisible}
+        onClose={() => setScannerModalVisible(false)}
+        reporterRole="Varkari Pilgrim"
+        onSOSDispatched={(createdAlert) => {
+          if (createdAlert) {
+            setActiveSosAlert(createdAlert);
+            setMapModalVisible(true);
+          }
+        }}
+      />
+
+      {/* OFFLINE EMERGENCY VOLUNTEERS POPUP MODAL */}
+      <Modal
+        visible={offlineModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setOfflineModalVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.offlineModalContent}>
+            <View style={styles.offlineModalHeader}>
+              <View style={styles.offlineModalIcon}>
+                <Ionicons name="call" size={24} color="#DC2626" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.offlineModalTitle}>
+                  {lang === 'mr' ? 'दिंडी स्वयंसेवक संपर्क' : 'Same-Vari Volunteers'}
+                </Text>
+                <Text style={styles.offlineModalSubtitle}>
+                  {lang === 'mr'
+                    ? 'इंटरनेट कनेक्शन उपलब्ध नाही. तुमच्या दिंडीतील खालील २ मदतनीसांना थेट कॉल करा:'
+                    : 'No internet connection. Tap below to call 2 nearby volunteers from your Dindi directly:'}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setOfflineModalVisible(false)}
+                style={styles.offlineModalClose}
+              >
+                <Ionicons name="close" size={20} color="#78716C" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.offlineModalList}>
+              {dindiVolunteers.slice(0, 2).map((vol) => (
+                <View key={vol.id} style={styles.offlineModalCard}>
+                  <View style={styles.offlineModalCardHeader}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.offlineModalVolName}>
+                        {lang === 'mr' ? vol.nameMr : vol.name}
+                      </Text>
+                      <Text style={styles.offlineModalVolRole}>
+                        🚩 {vol.dindiName} · {lang === 'mr' ? vol.roleMr : vol.role}
+                      </Text>
+                      <Text style={styles.offlineModalVolPhone}>
+                        {vol.phone}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={() => {
+                      setOfflineModalVisible(false);
+                      handleCallVolunteer(vol.phone, lang === 'mr' ? vol.nameMr : vol.name);
+                    }}
+                    style={styles.offlineModalCallBtn}
+                  >
+                    <Ionicons name="call" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+                    <Text style={styles.offlineModalCallBtnText}>
+                      {lang === 'mr' ? 'थेट फोन करा' : 'Call Volunteer'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </View>
+
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={() => setOfflineModalVisible(false)}
+              style={styles.offlineModalDismissBtn}
+            >
+              <Text style={styles.offlineModalDismissText}>
+                {lang === 'mr' ? 'बंद करा (Dismiss)' : 'Close'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -1469,6 +1737,285 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: colors.text,
+  },
+
+  // ─── Offline Emergency Volunteers Card & Modal Styles ───
+  offlineAlertCard: {
+    backgroundColor: '#FFF5F5',
+    borderWidth: 1.5,
+    borderColor: '#FECACA',
+    borderRadius: 18,
+    padding: 14,
+    marginBottom: spacing.md,
+    shadowColor: '#991B1B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 5,
+    elevation: 3,
+  },
+  offlineCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+  },
+  offlineIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#FEE2E2',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  offlineCardTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#991B1B',
+  },
+  offlineBadge: {
+    backgroundColor: '#DC2626',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  offlineBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  offlineCardSubtitle: {
+    fontSize: 12,
+    color: '#7F1D1D',
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  offlineVolunteersList: {
+    gap: 10,
+  },
+  volunteerContactItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#FED7D7',
+  },
+  volInfoCol: {
+    flex: 1,
+    marginRight: 8,
+  },
+  volName: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.text,
+  },
+  volDutyPill: {
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 6,
+  },
+  volDutyPillText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#15803D',
+  },
+  volRole: {
+    fontSize: 11,
+    color: colors.textSecondary,
+    marginTop: 1,
+  },
+  volPhoneText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0284C7',
+    marginTop: 3,
+  },
+  volCallButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#15803D',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    shadowColor: '#15803D',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  volCallButtonText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+
+  // Modal Backdrop & Content
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 18,
+  },
+  offlineModalContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    padding: 20,
+    width: '100%',
+    maxWidth: 420,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  offlineModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 16,
+  },
+  offlineModalIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#FEE2E2',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  offlineModalTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#1C1917',
+  },
+  offlineModalSubtitle: {
+    fontSize: 12,
+    color: '#57534E',
+    marginTop: 2,
+    lineHeight: 17,
+  },
+  offlineModalClose: {
+    padding: 4,
+  },
+  offlineModalList: {
+    gap: 12,
+    marginBottom: 16,
+  },
+  offlineModalCard: {
+    backgroundColor: '#FAF5EE',
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1.5,
+    borderColor: '#E8DED2',
+  },
+  offlineModalCardHeader: {
+    marginBottom: 10,
+  },
+  offlineModalVolName: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#1C1917',
+  },
+  offlineModalVolRole: {
+    fontSize: 12,
+    color: '#78716C',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  offlineModalVolPhone: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0284C7',
+    marginTop: 4,
+  },
+  offlineModalCallBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#15803D',
+    borderRadius: 12,
+    paddingVertical: 12,
+    shadowColor: '#15803D',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  offlineModalCallBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  offlineModalDismissBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+  },
+  offlineModalDismissText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#78716C',
+  },
+
+  // ─── Emergency ID Pass & Scanner Strip ───
+  emergencyIdPassStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: spacing.md,
+  },
+  passChipBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFDF9',
+    borderWidth: 1.5,
+    borderColor: '#F3E8DF',
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 8,
+    shadowColor: '#5D001E',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  passChipTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#5D001E',
+  },
+  passChipSubtitle: {
+    fontSize: 11,
+    color: '#78716C',
+    fontWeight: '700',
+    marginTop: 1,
+  },
+  scanQRPillBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#5D001E',
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    gap: 6,
+    shadowColor: '#5D001E',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  scanQRPillText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
   },
 });
 

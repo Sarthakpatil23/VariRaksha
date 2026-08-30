@@ -20,6 +20,7 @@ import { colors, spacing, typography } from '../../constants';
 import { DindiAlert } from '../../types';
 import { VariRakshaChatbot } from '../../components/chat/VariRakshaChatbot';
 import { VoiceBlobModal } from '../../components/blob/VoiceBlobModal';
+import { EmergencyQRScannerModal } from '../../components/emergency/EmergencyQRScannerModal';
 
 // Extended Dindi Alert interface for richer radar details
 interface RichDindiAlert extends DindiAlert {
@@ -89,6 +90,7 @@ export const DindiLeaderDashboardScreen: React.FC<
   const [meetupModalVisible, setMeetupModalVisible] = useState<boolean>(false);
   const [chatModalVisible, setChatModalVisible] = useState<boolean>(false);
   const [voiceBlobVisible, setVoiceBlobVisible] = useState<boolean>(false);
+  const [scannerModalVisible, setScannerModalVisible] = useState<boolean>(false);
   const [selectedMeetupPreset, setSelectedMeetupPreset] = useState<string>(
     '🍽️ Lunch Annachhatra',
   );
@@ -417,6 +419,24 @@ export const DindiLeaderDashboardScreen: React.FC<
             </TouchableOpacity>
           </View>
         </View>
+
+        {/* SCAN DINDI MEMBER QR PASS BUTTON */}
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={() => setScannerModalVisible(true)}
+          style={styles.dindiScanPassBtn}
+        >
+          <View style={styles.dindiScanIconBox}>
+            <Ionicons name="qr-code" size={18} color="#5D001E" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.dindiScanTitle}>Scan Member Emergency ID (QR)</Text>
+            <Text style={styles.dindiScanSubtitle}>
+              Scan lost or distressed pilgrim to view medical record & trigger SOS
+            </Text>
+          </View>
+          <Ionicons name="scan" size={20} color="#5D001E" />
+        </TouchableOpacity>
 
         {/* AI COMMANDER ASSISTANT BANNER */}
         <TouchableOpacity
@@ -891,6 +911,12 @@ export const DindiLeaderDashboardScreen: React.FC<
           </View>
         </View>
       </Modal>
+      {/* UNIVERSAL EMERGENCY QR SCANNER MODAL */}
+      <EmergencyQRScannerModal
+        visible={scannerModalVisible}
+        onClose={() => setScannerModalVisible(false)}
+        reporterRole="Dindi Leader / Pramukh"
+      />
     </SafeAreaView>
   );
 };
@@ -1677,6 +1703,43 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: typography.fontWeight.bold,
     color: '#FFFFFF',
+  },
+
+  // Scan Member Pass Button
+  dindiScanPassBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFDF9',
+    borderWidth: 1.5,
+    borderColor: '#EBD8B8',
+    borderRadius: 18,
+    padding: 12,
+    marginBottom: spacing.md,
+    gap: 10,
+    shadowColor: colors.maroon,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  dindiScanIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#F5ECE1',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  dindiScanTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: colors.maroon,
+  },
+  dindiScanSubtitle: {
+    fontSize: 11,
+    color: colors.textSecondary,
+    marginTop: 2,
+    lineHeight: 15,
   },
 });
 

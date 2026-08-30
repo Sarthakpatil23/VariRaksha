@@ -28,7 +28,13 @@ export {
 };
 
 export type AlertSeverity = 'critical' | 'moderate' | 'normal';
-export type AlertStatus = 'nearby' | 'in_progress' | 'resolved';
+export type AlertStatus =
+  | 'nearby'
+  | 'in_progress'
+  | 'transferring_to_medical'
+  | 'admitted_at_camp'
+  | 'referred_hospital'
+  | 'resolved';
 
 export interface EmergencyAlert {
   id: string;
@@ -64,6 +70,22 @@ export interface EmergencyAlert {
   priority_explanation?: string;
   priority_factors?: any;
   priorityData?: PriorityFactorsBreakdown;
+
+  // ─── Medical Camp Escalation & Triage Handover Fields ───
+  escalation_reason?: string;
+  target_camp_name?: string;
+  target_camp_lat?: number;
+  target_camp_lng?: number;
+  transfer_started_at?: string;
+  admitted_at?: string;
+  attending_doctor?: string;
+  ambulance_dispatched_at?: string;
+  referral_hospital_name?: string;
+  golden_hour_prep?: {
+    oxygenBedReady?: boolean;
+    ivLineReady?: boolean;
+    doctorReady?: boolean;
+  };
 }
 
 export interface VolunteerTask {
@@ -546,11 +568,11 @@ export async function fetchEmergencyAlerts(): Promise<{
   const mergedMap = new Map<string, EmergencyAlert>();
 
   for (const a of onlineAlerts) {
-    mergedMap.set(a.id, a);
+    mergedMap.set(a.id, enrichAlertWithEscalation(a));
   }
   for (const off of offlineAlerts) {
     if (!mergedMap.has(off.id)) {
-      mergedMap.set(off.id, off);
+      mergedMap.set(off.id, enrichAlertWithEscalation(off));
     }
   }
 
@@ -778,6 +800,238 @@ export async function deleteEmergencyAlert(
 }
 
 /**
+ * Helper to parse and enrich alert with Medical Camp escalation metadata stored in notes
+ */
+export function enrichAlertWithEscalation(alert: EmergencyAlert): EmergencyAlert {
+  if (!alert || !alert.notes) return alert;
+
+  if (alert.notes.includes('[TRANSFERRING_TO_MEDICAL]')) {
+    const reasonMatch = alert.notes.match(/Reason:\s*([^|]+)/);
+    const campMatch = alert.notes.match(/Camp:\s*([^|]+)/);
+    const prepMatch = alert.notes.match(/Prep:\s*({[^}]+})/);
+
+    let prep = alert.golden_hour_prep;
+    if (prepMatch) {
+      try {
+        prep = JSON.parse(prepMatch[1]);
+      } catch {}
+    }
+
+    return {
+      ...alert,
+      status: 'transferring_to_medical',
+      escalation_reason: reasonMatch ? reasonMatch[1].trim() : (alert.escalation_reason || 'Severe Medical Concern'),
+      target_camp_name: campMatch ? campMatch[1].trim() : (alert.target_camp_name || 'Wakhari Sector 1 Medical Camp'),
+      golden_hour_prep: prep || alert.golden_hour_prep,
+    };
+  }
+
+  if (alert.notes.includes('[ADMITTED_AT_CAMP]')) {
+    const docMatch = alert.notes.match(/Doctor:\s*([^|]+)/);
+    return {
+      ...alert,
+      status: 'admitted_at_camp',
+      attending_doctor: docMatch ? docMatch[1].trim() : (alert.attending_doctor || 'Dr. Medical Officer'),
+    };
+  }
+
+  if (alert.notes.includes('[REFERRED_HOSPITAL]')) {
+    const hospMatch = alert.notes.match(/Hospital:\s*([^|]+)/);
+    return {
+      ...alert,
+      status: 'referred_hospital',
+      referral_hospital_name: hospMatch ? hospMatch[1].trim() : (alert.referral_hospital_name || 'Pandharpur Sub-District / Civil Hospital'),
+    };
+  }
+
+  return alert;
+}
+
+/**
+ * Escalate an alert: Volunteer transfers pilgrim to nearest Medical Triage Camp
+ */
+export async function escalateToMedicalCamp(
+  alertId: string,
+  data: {
+    reason: string;
+    campName: string;
+    campLat: number;
+    campLng: number;
+    volunteerName: string;
+  },
+): Promise<{ success: boolean; alert: EmergencyAlert | null; error: string | null }> {
+  try {
+    const now = new Date().toISOString();
+    const noteContent = `[TRANSFERRING_TO_MEDICAL] Reason: ${data.reason} | Camp: ${data.campName} | Volunteer: ${data.volunteerName} | TransferAt: ${now}`;
+
+    console.log(`[AlertService] 🚨 Escalating alert ${alertId} to ${data.campName} (${data.reason})`);
+
+    // 1. Handle in-memory / offline queue if offline
+    if (alertId.startsWith('offline-')) {
+      const idx = pendingOfflineQueue.findIndex((a) => a.id === alertId);
+      if (idx !== -1) {
+        pendingOfflineQueue[idx] = {
+          ...pendingOfflineQueue[idx],
+          notes: noteContent,
+          updated_at: now,
+        };
+        return { success: true, alert: enrichAlertWithEscalation(pendingOfflineQueue[idx]), error: null };
+      }
+    }
+
+    // 2. Update Supabase
+    const { data: updated, error } = await supabase
+      .from('emergency_alerts')
+      .update({
+        status: 'in_progress',
+        notes: noteContent,
+        updated_at: now,
+      })
+      .eq('id', alertId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('[AlertService] Escalate error:', error.message);
+      return { success: false, alert: null, error: error.message };
+    }
+
+    return { success: true, alert: enrichAlertWithEscalation(updated as EmergencyAlert), error: null };
+  } catch (err: any) {
+    return { success: false, alert: null, error: err.message || 'Failed to escalate alert' };
+  }
+}
+
+/**
+ * Update Medical Staff Golden Hour pre-arrival preparedness checklist
+ */
+export async function updateGoldenHourPrep(
+  alertId: string,
+  prep: { oxygenBedReady?: boolean; ivLineReady?: boolean; doctorReady?: boolean },
+): Promise<{ success: boolean; alert: EmergencyAlert | null; error: string | null }> {
+  try {
+    const now = new Date().toISOString();
+    const currentAlert = await fetchAlertById(alertId);
+    let baseNotes = currentAlert?.notes || '[TRANSFERRING_TO_MEDICAL] Reason: Heat Stroke | Camp: Wakhari Medical Camp';
+    // Strip old Prep if present
+    baseNotes = baseNotes.replace(/\s*\|\s*Prep:\s*{[^}]+}/g, '');
+    const newNotes = `${baseNotes} | Prep: ${JSON.stringify(prep)}`;
+
+    if (alertId.startsWith('offline-')) {
+      const idx = pendingOfflineQueue.findIndex((a) => a.id === alertId);
+      if (idx !== -1) {
+        pendingOfflineQueue[idx].notes = newNotes;
+        pendingOfflineQueue[idx].golden_hour_prep = prep;
+        return { success: true, alert: enrichAlertWithEscalation(pendingOfflineQueue[idx]), error: null };
+      }
+    }
+
+    const { data: updated, error } = await supabase
+      .from('emergency_alerts')
+      .update({
+        notes: newNotes,
+        updated_at: now,
+      })
+      .eq('id', alertId)
+      .select()
+      .single();
+
+    if (error) {
+      return { success: false, alert: null, error: error.message };
+    }
+
+    return { success: true, alert: enrichAlertWithEscalation(updated as EmergencyAlert), error: null };
+  } catch (err: any) {
+    return { success: false, alert: null, error: err.message };
+  }
+}
+
+/**
+ * Medical Staff 1-Tap: Accept Patient & Complete Transfer of Care
+ * Frees up volunteer to return to their sector
+ */
+export async function acceptPatientTransfer(
+  alertId: string,
+  doctor: { name: string; bedAssigned?: string; notes?: string },
+): Promise<{ success: boolean; alert: EmergencyAlert | null; error: string | null }> {
+  try {
+    const now = new Date().toISOString();
+    const noteContent = `[ADMITTED_AT_CAMP] Doctor: ${doctor.name} | Bed: ${doctor.bedAssigned || 'Bed #2 (O2)'} | Notes: ${doctor.notes || 'Under observation'} | AdmittedAt: ${now}`;
+
+    console.log(`[AlertService] 🤝 Transfer of care accepted for ${alertId} by ${doctor.name}`);
+
+    if (alertId.startsWith('offline-')) {
+      const idx = pendingOfflineQueue.findIndex((a) => a.id === alertId);
+      if (idx !== -1) {
+        pendingOfflineQueue[idx].notes = noteContent;
+        return { success: true, alert: enrichAlertWithEscalation(pendingOfflineQueue[idx]), error: null };
+      }
+    }
+
+    const { data: updated, error } = await supabase
+      .from('emergency_alerts')
+      .update({
+        status: 'in_progress',
+        notes: noteContent,
+        updated_at: now,
+      })
+      .eq('id', alertId)
+      .select()
+      .single();
+
+    if (error) {
+      return { success: false, alert: null, error: error.message };
+    }
+
+    return { success: true, alert: enrichAlertWithEscalation(updated as EmergencyAlert), error: null };
+  } catch (err: any) {
+    return { success: false, alert: null, error: err.message || 'Failed to accept transfer' };
+  }
+}
+
+/**
+ * 1-Tap 108 Ambulance Dispatch / Refer to Higher Center (Pandharpur Civil Hospital)
+ */
+export async function dispatch108Ambulance(
+  alertId: string,
+  hospitalName: string = 'Pandharpur Sub-District / Civil Hospital',
+): Promise<{ success: boolean; alert: EmergencyAlert | null; error: string | null }> {
+  try {
+    const now = new Date().toISOString();
+    const noteContent = `[REFERRED_HOSPITAL] Hospital: ${hospitalName} | 108 Dispatched At: ${now}`;
+
+    console.log(`[AlertService] 🚑 108 Ambulance dispatched for ${alertId} to ${hospitalName}`);
+
+    if (alertId.startsWith('offline-')) {
+      const idx = pendingOfflineQueue.findIndex((a) => a.id === alertId);
+      if (idx !== -1) {
+        pendingOfflineQueue[idx].notes = noteContent;
+        return { success: true, alert: enrichAlertWithEscalation(pendingOfflineQueue[idx]), error: null };
+      }
+    }
+
+    const { data: updated, error } = await supabase
+      .from('emergency_alerts')
+      .update({
+        status: 'in_progress',
+        notes: noteContent,
+        updated_at: now,
+      })
+      .eq('id', alertId)
+      .select()
+      .single();
+
+    if (error) {
+      return { success: false, alert: null, error: error.message };
+    }
+
+    return { success: true, alert: enrichAlertWithEscalation(updated as EmergencyAlert), error: null };
+  } catch (err: any) {
+    return { success: false, alert: null, error: err.message };
+  }
+}
+
+/**
  * Realtime subscription for a single specific alert (used by Varkari pilgrim to track assignment)
  */
 export function subscribeToSingleAlert(
@@ -801,10 +1055,10 @@ export function subscribeToSingleAlert(
             console.log('[AlertService] Single alert deleted from DB');
             onUpdate(null);
           } else if (payload.new) {
-            const enriched = {
+            const enriched = enrichAlertWithEscalation({
               ...(payload.new as EmergencyAlert),
               priorityData: calculateDynamicPriority(payload.new as EmergencyAlert),
-            };
+            });
             onUpdate(enriched);
           }
         },
@@ -835,10 +1089,11 @@ export function subscribeToEmergencyAlerts(
         { event: '*', schema: 'public', table: 'emergency_alerts' },
         (payload) => {
           if (payload.new) {
-            const enriched = {
-              ...payload.new,
-              priorityData: calculateDynamicPriority(payload.new),
-            };
+            const rawAlert = payload.new as EmergencyAlert;
+            const enriched = enrichAlertWithEscalation({
+              ...rawAlert,
+              priorityData: calculateDynamicPriority(rawAlert),
+            });
             onUpdate({ ...payload, new: enriched });
           } else {
             onUpdate(payload);

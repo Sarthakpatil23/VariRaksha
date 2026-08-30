@@ -21,6 +21,7 @@ import {
   TriageFilterModal,
   NewPatientModal,
 } from '../../components/medicalStaff';
+import { EmergencyQRScannerModal } from '../../components/emergency/EmergencyQRScannerModal';
 
 const INITIAL_PATIENTS: PatientTriageItem[] = [
   {
@@ -141,6 +142,7 @@ export const MedicalStaffDashboardScreen: React.FC<
   const [isActiveCasesModalVisible, setIsActiveCasesModalVisible] = useState<boolean>(false);
   const [isFilterModalVisible, setIsFilterModalVisible] = useState<boolean>(false);
   const [isNewPatientModalVisible, setIsNewPatientModalVisible] = useState<boolean>(false);
+  const [scannerModalVisible, setScannerModalVisible] = useState<boolean>(false);
 
   // Filter state
   const [filterSeverity, setFilterSeverity] = useState<string>('all');
@@ -248,6 +250,24 @@ export const MedicalStaffDashboardScreen: React.FC<
           >
             <View style={styles.greenDot} />
             <Text style={styles.bedsText}>Beds: 8/12 available</Text>
+          </TouchableOpacity>
+
+          {/* SCAN INCOMING PATIENT QR PASS BUTTON */}
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => setScannerModalVisible(true)}
+            style={styles.scanPatientQRBtn}
+          >
+            <View style={styles.scanPatientIconBox}>
+              <Ionicons name="qr-code" size={18} color="#8B1E1E" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.scanPatientTitle}>Scan Patient Emergency Pass (QR)</Text>
+              <Text style={styles.scanPatientSubtitle}>
+                Auto-load blood group, medical history, allergies, or trigger direct SOS
+              </Text>
+            </View>
+            <Ionicons name="scan" size={20} color="#8B1E1E" />
           </TouchableOpacity>
         </View>
 
@@ -390,6 +410,13 @@ export const MedicalStaffDashboardScreen: React.FC<
         visible={isNewPatientModalVisible}
         onClose={() => setIsNewPatientModalVisible(false)}
         onAddPatient={handleAddNewPatient}
+      />
+
+      {/* UNIVERSAL EMERGENCY QR SCANNER MODAL */}
+      <EmergencyQRScannerModal
+        visible={scannerModalVisible}
+        onClose={() => setScannerModalVisible(false)}
+        reporterRole="Medical Camp Doctor"
       />
     </SafeAreaView>
   );
@@ -593,6 +620,43 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     marginLeft: 6,
+  },
+
+  // Scan Patient Pass Button
+  scanPatientQRBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#F3E8DF',
+    borderRadius: 18,
+    padding: 12,
+    marginTop: 10,
+    gap: 10,
+    shadowColor: '#8B1E1E',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  scanPatientIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#FAF5EE',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  scanPatientTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#8B1E1E',
+  },
+  scanPatientSubtitle: {
+    fontSize: 11,
+    color: '#78716C',
+    marginTop: 2,
+    lineHeight: 15,
   },
 });
 
