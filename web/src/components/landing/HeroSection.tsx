@@ -29,11 +29,11 @@ export const HeroSection: React.FC = () => {
             </span>
           </div>
 
-          {/* Large confident headline — no italic serif */}
+          {/* Large confident headline */}
           <h1 className="text-4xl sm:text-5xl lg:text-[68px] font-bold text-ink tracking-tightest leading-[1.06] mb-6">
-            Protection that reaches you,<br />
-            even when the<br />
-            network doesn't.
+            Every step protected,<br />
+            every pilgrim safe<br />
+            on the sacred path.
           </h1>
 
           {/* Supporting copy */}

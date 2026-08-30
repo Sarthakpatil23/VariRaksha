@@ -36,7 +36,7 @@ export const Footer: React.FC = () => {
             </p>
 
             <div className="inline-flex items-center gap-2 text-xs font-medium text-parchment/60 pt-2">
-              <span>Protection that reaches you, even offline.</span>
+              <span>Unbroken protection for every pilgrim on the sacred path.</span>
             </div>
           </div>
 
